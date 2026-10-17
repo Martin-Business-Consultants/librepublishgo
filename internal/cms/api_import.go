@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/restore"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // Importing a backup from another install (docs/import.md): upload it,

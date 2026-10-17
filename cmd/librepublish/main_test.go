@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/datalock"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/restore"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/datalock"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // backup is a Go backup of an empty site.

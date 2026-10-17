@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 func (a *App) listAudit(c *Ctx) error {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/fields"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/fields"
 )
 
 // The schema's digest is what a site pins the types it generated to:

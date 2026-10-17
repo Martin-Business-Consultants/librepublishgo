@@ -6,10 +6,10 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Martin-Business-Consultants/libre-publish.git",
+    "url": "git+https://github.com/Martin-Business-Consultants/librepublishgo.git",
     "directory": "packages/astro"
   },
-  "homepage": "https://github.com/Martin-Business-Consultants/libre-publish/tree/main/packages/astro#readme",
+  "homepage": "https://github.com/Martin-Business-Consultants/librepublishgo/tree/main/packages/astro#readme",
   "keywords": [
     "astro-integration",
     "withastro",
@@ -92,7 +92,7 @@
     "typescript": "^5.9.0"
   },
   "bugs": {
-    "url": "https://github.com/Martin-Business-Consultants/libre-publish/issues"
+    "url": "https://github.com/Martin-Business-Consultants/librepublishgo/issues"
   },
   "bin": {
     "librepublish-astro": "./bin/librepublish-astro.mjs"

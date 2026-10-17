@@ -18,8 +18,8 @@ import (
 	extism "github.com/extism/go-sdk"
 	"github.com/tetratelabs/wazero"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // New is a host keeping plugins in db and reaching the CMS through env;

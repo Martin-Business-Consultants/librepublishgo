@@ -1,7 +1,7 @@
 # LibrePublish CMS for Astro
 
 `@librepublish/astro` is the whole Astro integration for
-[LibrePublish CMS](https://github.com/Martin-Business-Consultants/libre-publish),
+[LibrePublish CMS](https://github.com/Martin-Business-Consultants/librepublishgo),
 in one package. It lives beside the CMS (this repository's Go core) and is
 written against its APIs, so the two move together:
 

@@ -1,4 +1,4 @@
-module github.com/Martin-Business-Consultants/libre-publish/plugins/forms
+module github.com/Martin-Business-Consultants/librepublishgo/plugins/forms
 
 go 1.26
 

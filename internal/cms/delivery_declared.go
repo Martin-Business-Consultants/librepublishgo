@@ -4,7 +4,7 @@ import (
 	"context"
 	"maps"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/fields"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/fields"
 )
 
 // What the delivery API sends is what /api/v1/schema declares: frontmatter,

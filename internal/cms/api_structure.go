@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // The block types the CMS ships, exported from the Rails core's

@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // A Revision is a write to something live from a caller whose role can't

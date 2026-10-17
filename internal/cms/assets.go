@@ -28,9 +28,9 @@ import (
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // Media files keep Active Storage's disk layout (storage/ab/cd/abcd…), so a

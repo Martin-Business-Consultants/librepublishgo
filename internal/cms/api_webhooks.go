@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/outbound"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/webhook"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/webhook"
 )
 
 func (a *App) listWebhooks(c *Ctx) error {

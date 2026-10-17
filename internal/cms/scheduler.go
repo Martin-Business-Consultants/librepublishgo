@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // scheduler publishes and unpublishes what's due, and empties old trash.

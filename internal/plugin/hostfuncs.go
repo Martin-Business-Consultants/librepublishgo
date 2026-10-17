@@ -13,8 +13,8 @@ import (
 
 	extism "github.com/extism/go-sdk"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/mail"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 func (h *Host) hostFunctions(key string, grants Grants) []extism.HostFunction {

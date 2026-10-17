@@ -23,8 +23,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/fields"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/fields"
 )
 
 // site is a running install for a test: the app, its server, and tokens

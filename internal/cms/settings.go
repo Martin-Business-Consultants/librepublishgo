@@ -11,8 +11,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // setting reads one settings key's data ({} when it isn't set). Any other

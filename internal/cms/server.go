@@ -23,14 +23,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/deploy"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/jsonv"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/plugin"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/ratelimit"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/webhook"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/deploy"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/jsonv"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/webhook"
 )
 
 // Config is what an install is started with; everything else lives in the

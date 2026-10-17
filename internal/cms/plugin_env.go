@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/mail"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
 // pluginEnv is what plugins reach of the CMS (plugin.Env).

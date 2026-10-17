@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // Rails' own bookkeeping, which nobody needs told about.

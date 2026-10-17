@@ -8,8 +8,8 @@ import (
 	"github.com/tetratelabs/wazero"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/plugin"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 )
 
 func TestMain(m *testing.M) {

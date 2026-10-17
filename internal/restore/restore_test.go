@@ -22,11 +22,11 @@ import (
 	"github.com/tetratelabs/wazero"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/cms"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/plugin"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/restore"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/cms"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 func TestMain(m *testing.M) {

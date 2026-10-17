@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // A text column, and whether it may be NULL.

@@ -11,7 +11,7 @@ name: CI
 
 on:
   push:
-    branches: [main, go-rewrite]
+    branches: [main]
   pull_request:
 
 permissions:

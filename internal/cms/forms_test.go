@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/mail"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 )
 
 // captureMailer keeps what would have been sent.

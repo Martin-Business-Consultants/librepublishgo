@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 )
 
 // notTags is text with < in it that isn't HTML, in any text field.

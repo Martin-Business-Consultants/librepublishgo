@@ -21,10 +21,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/jsonv"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/outbound"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/secret"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/jsonv"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // Spawn runs fn in the background for as long as the app lives; false when

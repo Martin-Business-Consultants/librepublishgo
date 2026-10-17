@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 var trashKinds = []string{"page", "entry", "global", "asset"}

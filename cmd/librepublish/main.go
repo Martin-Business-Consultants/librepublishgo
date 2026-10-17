@@ -28,10 +28,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/admin"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/cms"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/datalock"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/restore"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/admin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/cms"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/datalock"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
 )
 
 // version is this build's: set from the release tag (make dist VERSION=…).

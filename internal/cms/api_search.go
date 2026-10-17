@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 )
 
 func (a *App) search(c *Ctx) error {

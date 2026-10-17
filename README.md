@@ -5,7 +5,7 @@ plugin host, compiled into a single static binary (about 20 MB, no cgo) for
 Linux, macOS and Windows.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/libre-publish/go-rewrite/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/main/install.sh | sh
 librepublish serve --data ./data
 # open http://localhost:8080/cms/ and make the first administrator
 ```
@@ -14,14 +14,15 @@ That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no
 restart to add a plugin. It idles at about 28 MB of memory. The script picks
 the build for your machine from the latest release and checks it against the
 release's checksums. Without it, download `librepublish-<os>-<arch>` from
-[Releases](https://github.com/Martin-Business-Consultants/libre-publish/releases)
+[Releases](https://github.com/Martin-Business-Consultants/librepublishgo/releases)
 and run it.
 
-This branch is a rewrite of the Rails core, which stays on `main` as the
-reference. It is checked against that core's contracts: the same tables, the
-same `/api` and `/api/v1` answers (docs/delivery-api.md), the same webhook
-payloads (docs/webhooks.md, `contracts/webhook_contract.json`). So the `cms`
-CLI, the Astro integration and existing webhook receivers keep working.
+This is the Go core of Libre Publish, a rewrite of the Rails core (which
+stays at [libre-publish](https://github.com/Martin-Business-Consultants/libre-publish)
+as the reference). It opens a Rails core's database as it is and imports its
+backups (docs/import.md); its delivery API and webhooks are held to
+`contracts/`, which the Astro integration (`packages/astro`) is tested
+against.
 
 ## Running it
 

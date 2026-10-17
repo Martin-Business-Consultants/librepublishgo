@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 )
 
 // Branding is the site's visual identity (Settings › Brand), as the Rails

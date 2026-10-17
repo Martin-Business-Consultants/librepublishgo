@@ -31,8 +31,8 @@ import (
 
 	extism "github.com/extism/go-sdk"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/mail"
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // Manifest is what a plugin says it is and needs (its manifest export).

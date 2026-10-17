@@ -3,7 +3,7 @@ package cms
 import (
 	"context"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 func (a *App) audit(ctx context.Context, actor *Actor, action, targetType string, targetID int64, targetLabel string, meta map[string]any) {

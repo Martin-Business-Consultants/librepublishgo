@@ -3,13 +3,13 @@
 # release (or LIBREPUBLISH_VERSION=v2.0.0), checked against the release's
 # checksums.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/libre-publish/go-rewrite/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/go-rewrite/install.sh | sh
 #
 # It goes to /usr/local/bin when that's writable, else ~/.local/bin
 # (LIBREPUBLISH_DIR=… to choose).
 set -eu
 
-repo="Martin-Business-Consultants/libre-publish"
+repo="Martin-Business-Consultants/librepublishgo"
 version="${LIBREPUBLISH_VERSION:-latest}"
 
 case "$(uname -s)" in

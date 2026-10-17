@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // The Go Forms plugin's records (plugins/forms), as it stores them in

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Martin-Business-Consultants/libre-publish/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 )
 
 // managerSite is a site with Bob, who holds users:*, roles:*, settings:*

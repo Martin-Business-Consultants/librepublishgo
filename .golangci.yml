@@ -107,7 +107,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/Martin-Business-Consultants/libre-publish
+        - github.com/Martin-Business-Consultants/librepublishgo
   exclusions:
     generated: lax
     paths:

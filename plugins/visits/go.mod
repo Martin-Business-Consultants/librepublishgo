@@ -1,4 +1,4 @@
-module github.com/Martin-Business-Consultants/libre-publish/plugins/visits
+module github.com/Martin-Business-Consultants/librepublishgo/plugins/visits
 
 go 1.26
 

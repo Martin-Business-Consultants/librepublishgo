@@ -1,4 +1,4 @@
-module github.com/Martin-Business-Consultants/libre-publish
+module github.com/Martin-Business-Consultants/librepublishgo
 
 go 1.26.0
 
