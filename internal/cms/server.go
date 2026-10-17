@@ -30,6 +30,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/update"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/webhook"
 )
 
@@ -48,6 +49,9 @@ type Config struct {
 	// Version is this build's, "dev" when empty. The API it serves is
 	// frozen whatever the version.
 	Version string
+	// UpdateCheck looks for a newer release once a day (GitHub's), for the
+	// admin's "a new version is available"; UPDATE_CHECK=0 turns it off.
+	UpdateCheck bool
 	// Requests a minute per token across /api/v1: 0 for the default
 	// (1200), below 0 for no limit.
 	DeliveryRateLimit int
@@ -88,6 +92,8 @@ type App struct {
 	beforeSetting map[string]func(data map[string]any)
 	// Settings › General's CMS address (cms_url), kept here for BaseURL.
 	cmsURL atomic.Pointer[string]
+	// The newest release, when it's newer than this build (UpdateCheck).
+	newer atomic.Pointer[update.Release]
 
 	limiter *ratelimit.Limiter // the delivery API's, per token
 	// Sign-in: ten tries a minute from one address, and ten at one account
@@ -177,7 +183,55 @@ func (a *App) Start(ctx context.Context) error {
 	if !a.spawn(a.ctx, "scheduler", a.scheduler) {
 		return errors.New("the app is closed")
 	}
+	if a.cfg.UpdateCheck {
+		a.spawn(a.ctx, "update check", a.checkForUpdates)
+	}
 	return nil
+}
+
+// checkForUpdates asks for the newest release a minute after starting, then
+// daily, and keeps it when it's newer than this build.
+func (a *App) checkForUpdates(ctx context.Context) {
+	wait := time.Minute
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = 24 * time.Hour
+		r, err := update.Latest(ctx)
+		if err != nil {
+			a.log.Debug("update check", "err", err)
+			continue
+		}
+		if update.Newer(r.Version, a.cfg.Version) {
+			a.newer.Store(&r)
+			a.log.Info("a new version is available", "version", r.Version, "running", a.cfg.Version, "notes", r.URL)
+		}
+	}
+}
+
+// updateNoticeFor is updateNotice for an Administrator; nil for anyone else.
+func (a *App) updateNoticeFor(actor *Actor) any {
+	if actor == nil || actor.Role == nil || !actor.Role.System {
+		return nil
+	}
+	return a.updateNotice()
+}
+
+// updateNotice is the newer release, for an Administrator: what it is and
+// how this install takes it (a container's image, or `librepublish update`).
+func (a *App) updateNotice() any {
+	r := a.newer.Load()
+	if r == nil {
+		return nil
+	}
+	how := "binary"
+	if update.InContainer() {
+		how = "image"
+	}
+	return O("version", r.Version, "url", r.URL, "how", how)
 }
 
 // Close stops what runs in the background, waits for it, then closes the

@@ -68,6 +68,27 @@ docker run -p 8080:80 -v librepublish-data:/data -e APP_URL=https://cms.example.
 docker exec -it <container> librepublish user create --email you@example.com --name You --password -
 ```
 
+### Updating
+
+Versions are [releases](https://github.com/Martin-Business-Consultants/librepublishgo/releases):
+a `vX.Y.Z` tag, its notes, every platform's binary with `checksums.txt`,
+and the container image `ghcr.io/martin-business-consultants/librepublishgo:X.Y.Z`
+(and `:latest`). The admin's dashboard tells an Administrator when a newer
+one is out (it asks GitHub once a day; `UPDATE_CHECK=0` turns that off).
+Take a backup first (Tools › Backup), then:
+
+- **On a container host**, deploy the new version: the image tag, or the
+  `vX.Y.Z` git tag if the host builds from the repository. The new
+  container starts beside the old one on the same `/data` and takes over
+  once `/up` answers, so there's no downtime.
+- **As a binary**, `librepublish update` downloads the newest release for
+  the machine, checks it against `checksums.txt` and puts it in place
+  (keeping the old one as `librepublish.old`); restart the service.
+
+The database is brought up to date on start, by itself. Going back to an
+older version is deploying it again, unless a release's notes say it
+changed the database, in which case it's restoring the backup.
+
 From the command line, without the admin:
 
 ```sh
@@ -76,6 +97,7 @@ librepublish user password --email you@example.com --password -              # l
 librepublish token create --name PRODUCTION --role "Production site"          # the site's read token
 librepublish seed-blocks                                                      # the starter block types
 librepublish import backup.tar.gz --dry-run                                   # what an import would do
+librepublish update --check                                                   # is there a newer release?
 ```
 
 `--password -` reads the password from the first line of stdin; leave

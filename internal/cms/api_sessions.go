@@ -24,7 +24,7 @@ func (a *App) showSession(c *Ctx) error {
 		caps = a.capabilitiesOf(c.Actor.Role)
 	}
 	return c.JSON(200, O("signed_in", true, "csrf", c.Actor.Session.CSRF, "user", O("id", c.Actor.UserID, "name", c.Actor.Name, "email", c.Actor.Email, "pending_email", a.pendingEmail(c.R.Context(), c.Actor.UserID)),
-		"capabilities", caps, "system", c.Actor.Role != nil && c.Actor.Role.System, "cms_address_set", a.addressKnown(), "site", str(a.general(c.R.Context())["title"]), "version", a.cfg.Version, "preferences", a.preferences(c.R.Context(), c.Actor.UserID),
+		"capabilities", caps, "system", c.Actor.Role != nil && c.Actor.Role.System, "cms_address_set", a.addressKnown(), "update", a.updateNoticeFor(c.Actor), "site", str(a.general(c.R.Context())["title"]), "version", a.cfg.Version, "preferences", a.preferences(c.R.Context(), c.Actor.UserID),
 		"branding", a.brandingJSON(c.R.Context(), true)))
 }
 

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,6 +33,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/cms"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/datalock"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/update"
 )
 
 // version is this build's: set from the release tag (make dist VERSION=…).
@@ -88,6 +90,8 @@ func run(ctx context.Context, stop func(), args []string) error {
 		return seedBlocks(ctx, args)
 	case "import":
 		return importBackup(ctx, args)
+	case "update":
+		return selfUpdate(ctx, args)
 	case "version", "--version":
 		fmt.Println("librepublish", version)
 		return nil
@@ -110,7 +114,14 @@ func usage(w io.Writer) {
   seed-blocks  install the starter block types
   import       replace the site with a backup  ARCHIVE-OR-DIR [--dry-run] [--force]
                (this core's, or the Rails core's)  [--secret-key-file F] [--json]
+  update       install the newest release over this binary   [--check]
   version
+
+update downloads the newest release for this machine, checks it against the
+release's checksums.txt and puts it in place of this binary (the old one is
+kept beside it as .old); restart the service after. --check only says
+whether there's one. In a container, deploy the new image instead
+(ghcr.io/martin-business-consultants/librepublishgo:<version>).
 
 import reads a backup from Tools › Backup (either core), a Rails data
 directory backup, or any of them unpacked. --dry-run says what it would do
@@ -196,7 +207,7 @@ func parseArgs(name string, args []string, extra func(*flag.FlagSet)) (cms.Confi
 	}
 	trust := os.Getenv("TRUST_PROXY") == "1" || os.Getenv("TRUST_PROXY") == "true"
 	return cms.Config{DataDir: *data, Addr: *listen, BaseURL: base, SiteKey: os.Getenv("SITE_KEY"), SecretKey: os.Getenv("SECRET_KEY"),
-		Version: version, DeliveryRateLimit: limit, TrustProxy: trust, Logger: logger, ImportMaxBytes: importMax}, rest, nil
+		Version: version, UpdateCheck: os.Getenv("UPDATE_CHECK") != "0" && os.Getenv("UPDATE_CHECK") != "false", DeliveryRateLimit: limit, TrustProxy: trust, Logger: logger, ImportMaxBytes: importMax}, rest, nil
 }
 
 // rateLimit reads CMS_DELIVERY_RATE_LIMIT: unset is the default, 0 is none
@@ -538,4 +549,47 @@ func readKey(path string) (string, error) {
 		return "", usagef("--secret-key-file %s is empty", path)
 	}
 	return key, nil
+}
+
+// selfUpdate installs the newest release over this binary, or with --check
+// only says whether there's one.
+func selfUpdate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	check := fs.Bool("check", false, "only say whether a newer release is out")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return usageError{err}
+	}
+	if fs.NArg() > 0 {
+		return usagef("update takes no arguments")
+	}
+	r, err := update.Latest(ctx)
+	if err != nil {
+		return err
+	}
+	if !update.Newer(r.Version, version) {
+		fmt.Printf("librepublish %s is the newest (the latest release is %s).\n", version, r.Version)
+		return nil
+	}
+	fmt.Printf("librepublish %s is out (this is %s): %s\n", r.Version, version, r.URL)
+	if *check {
+		return nil
+	}
+	if update.InContainer() {
+		return fmt.Errorf("this runs in a container: deploy ghcr.io/martin-business-consultants/librepublishgo:%s on your host instead", r.Version)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return err
+	}
+	if err := update.Install(ctx, r, exe); err != nil {
+		return err
+	}
+	fmt.Printf("Installed %s at %s. Restart the service to run it (systemctl restart librepublish, or however it's started).\n", r.Version, exe)
+	return nil
 }

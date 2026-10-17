@@ -46,6 +46,15 @@
 
 <PageHeader title="Dashboard" cli="cms doctor" />
 
+{#if session.me?.update}
+  {@const u = session.me.update}
+  <Notice tone="info" class="mb-6">
+    Libre Publish <strong>{u.version}</strong> is out (this is {session.version}): <a href={u.url} target="_blank" rel="noopener noreferrer" class="font-medium underline underline-offset-4">what's new</a>.
+    {#if u.how === "image"}Deploy it on your host: the image <code class="font-mono text-xs">ghcr.io/martin-business-consultants/librepublishgo:{u.version}</code>, or the <code class="font-mono text-xs">v{u.version}</code> tag.{:else}Install it with <code class="font-mono text-xs">librepublish update</code>, then restart the service.{/if}
+    Take a backup first (Tools › Backup).
+  </Notice>
+{/if}
+
 {#if !data}
   <div class="flex justify-center py-16"><Spinner /></div>
 {:else}
