@@ -89,7 +89,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "astro": "^7.4.0",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   },
   "bugs": {
     "url": "https://github.com/Martin-Business-Consultants/librepublishgo/issues"
