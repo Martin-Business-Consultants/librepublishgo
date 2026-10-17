@@ -23,10 +23,26 @@ class Session {
       this.needsSetup = !!s.needs_setup;
       this.me = s.signed_in ? s : null;
       this.csrf = s.signed_in ? s.csrf : "";
+      await this.learnAddress();
     } catch {
       this.me = null;
     }
     this.ready = true;
+  }
+
+  // The CMS's own address (Settings › General), which image and file URLs
+  // start with: unknown to the server until set, but not to the browser an
+  // Administrator opens the admin in. Not on localhost: there the server's
+  // own guess is right, and a dev server's port isn't the CMS's.
+  async learnAddress() {
+    if (!this.me?.system || this.me.cms_address_set !== false || ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) return;
+    const { patch } = await import("./api.js");
+    try {
+      await patch("/settings/general", { setting: { data: { cms_url: location.origin } } }, { quiet: true });
+      this.me.cms_address_set = true;
+    } catch {
+      // Settings › General says it's unset, and offers this address.
+    }
   }
 
   signedOut() {
