@@ -153,7 +153,8 @@ try {
   for (const mode of ["hybrid", "SSR=1"]) {
     step(`astro build (${mode})`);
     rmSync(join(example, "dist"), { recursive: true, force: true });
-    const log = run("npx", ["astro", "build"], { env: { ...env, SSR: mode === "SSR=1" ? "1" : "" } });
+    // Astro colors its log on CI too: matched without the escape codes.
+    const log = run("npx", ["astro", "build"], { env: { ...env, SSR: mode === "SSR=1" ? "1" : "" } }).replace(/\x1B\[[0-9;]*m/g, "");
     const out = join(example, "dist/client");
     const read = (path) => readFileSync(join(out, path), "utf8");
     assert.match(log, /Reported the build to the CMS \((hybrid|server)\)/);
