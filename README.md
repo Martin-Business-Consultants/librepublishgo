@@ -56,17 +56,34 @@ Put TLS in front of it (Caddy is one line: `cms.example.com { reverse_proxy :808
 
 On a host that runs containers, the `Dockerfile` builds the same binary
 into a small image that runs it as an unprivileged user, whoever owns the
-volume the host mounts (`docker/librepublish` hands it over). Mount a
-volume at `/data`, which is everything the site keeps, and set `APP_URL` and, behind
-the host's proxy, `TRUST_PROXY=1`. It listens on port 80, where Kamal-style
-hosts (kamal-proxy) send traffic and health checks (`PORT` moves it), logs
-JSON, and `GET /up` is its health check.
+volume the host mounts (`docker/librepublish` hands it over). It listens on
+port 80, where Kamal-style hosts (kamal-proxy) send traffic and health
+checks (`PORT` moves it), logs JSON, and `GET /up` is its health check. Set
+`APP_URL` (or let the admin record its address in Settings › General) and,
+behind the host's proxy, `TRUST_PROXY=1`.
+
+**Mount a named volume at `/data`, one per site.** `/data` is everything
+the site keeps, and a container's own disk, or an anonymous volume, is gone
+with the container at the next deploy. So the CMS refuses to start in a
+container without a persistent volume there (`EPHEMERAL_DATA=1` allows a
+trial that may lose it), and the deploy fails before anything is lost.
 
 ```sh
 docker build -t librepublish --build-arg VERSION=$(git describe --tags --always) .
-docker run -p 8080:80 -v librepublish-data:/data -e APP_URL=https://cms.example.com librepublish
+docker run -p 8080:80 -v oldmill-data:/data -e SITE_KEY=oldmill -e APP_URL=https://cms.oldmillbrew.com librepublish
 docker exec -it <container> librepublish user create --email you@example.com --name You --password -
 ```
+
+#### Several sites on one server
+
+Each site is its own app: its own container, its own **named volume**
+(`oldmill-data`, `acme-data`, never shared), its own `SITE_KEY`, `APP_URL`
+and host name. Set `SITE_KEY` on every one: the first start records it in
+the volume (`/data/.site`), and a container with another `SITE_KEY` refuses
+that volume, so a copied config can't put two sites on one database. Two
+containers of the same site may share its volume for the moment a deploy
+overlaps them; an import still needs it to itself. Back each volume up
+(Tools › Backup, or a copy of the volume with the site stopped).
 
 ### Updating
 

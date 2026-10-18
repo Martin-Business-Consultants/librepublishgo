@@ -1,6 +1,9 @@
 # Libre Publish in a container: the one binary (API, admin, SQLite, the
 # default plugins, all built in) on a small image. Everything it keeps lives
-# in /data: mount a volume there.
+# in /data: mount a named volume there, one per site. It refuses to start
+# without one (EPHEMERAL_DATA=1 allows a trial): with no volume, or Docker's
+# anonymous one, every deploy would start the site afresh. There's no VOLUME
+# line for that reason: it would make Docker hand each container a new one.
 #
 #   docker build -t librepublish .
 #   docker run -p 8080:80 -v librepublish-data:/data -e APP_URL=https://cms.example.com librepublish
@@ -32,7 +35,6 @@ RUN chmod 0755 /usr/local/bin/librepublish
 # Port 80: what Kamal-style hosts (kamal-proxy) send traffic and health
 # checks to by default. A host that sets PORT moves it.
 ENV DATA_DIR=/data LOG_FORMAT=json PORT=80
-VOLUME /data
 EXPOSE 80
 ENTRYPOINT ["librepublish"]
 CMD ["serve"]

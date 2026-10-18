@@ -257,6 +257,9 @@ func serve(ctx context.Context, stop func(), args []string) (err error) {
 		return err
 	}
 	cfg.Admin = admin.Handler()
+	if err := checkPersistent(cfg); err != nil {
+		return err
+	}
 	// No import under a server (servers may overlap, as a deploy does).
 	lock, err := datalock.AcquireShared(cfg.DataDir)
 	switch {
@@ -268,6 +271,10 @@ func serve(ctx context.Context, stop func(), args []string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, lock.Release()) }()
+	// One site per data directory: a volume shared by mistake isn't.
+	if err := datalock.ClaimForSite(cfg.DataDir, cfg.SiteKey); err != nil {
+		return err
+	}
 	app, err := cms.NewServer(cfg)
 	if err != nil {
 		return err
@@ -592,4 +599,24 @@ func selfUpdate(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("Installed %s at %s. Restart the service to run it (systemctl restart librepublish, or however it's started).\n", r.Version, exe)
 	return nil
+}
+
+// checkPersistent refuses, in a container, a data directory the next
+// deploy would lose (no volume, or an anonymous one), unless EPHEMERAL_DATA=1
+// says that's meant (a trial).
+func checkPersistent(cfg cms.Config) error {
+	if !update.InContainer() {
+		return nil
+	}
+	if os.Getenv("EPHEMERAL_DATA") == "1" {
+		cfg.Logger.Warn("EPHEMERAL_DATA=1: the data directory may be lost with this container", "data", cfg.DataDir)
+		return nil
+	}
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		cfg.Logger.Warn("can't tell whether the data directory is a volume", "err", err)
+		return nil
+	}
+	defer f.Close()
+	return datalock.CheckPersistent(cfg.DataDir, f)
 }
