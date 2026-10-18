@@ -10,7 +10,7 @@ import (
 
 func TestCheckPersistent(t *testing.T) {
 	t.Parallel()
-	const root = "1 0 0:50 / / rw - overlay overlay rw\n"
+	const root = "1 0 0:50 / / rw - overlay rootfs rw\n"
 	for _, tc := range []struct {
 		name, mountinfo string
 		ok              bool
