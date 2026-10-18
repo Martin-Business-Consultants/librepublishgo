@@ -29,11 +29,3 @@ updates:
       npm-minor-patch:
         update-types: [minor, patch]
 
-  - package-ecosystem: npm
-    directories: ["/packages/astro", "/packages/astro/example"]
-    schedule:
-      interval: weekly
-    labels: ["dependencies", "astro"]
-    groups:
-      npm-minor-patch:
-        update-types: [minor, patch]

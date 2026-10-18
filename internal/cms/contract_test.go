@@ -27,7 +27,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/plugins/visits"
 )
 
-// The contract: what a site (packages/astro) is built against, recorded
+// The contract: what a site (librepublish-astro) is built against, recorded
 // from a real install into contracts/: each answer's body in
 // contracts/<group>/<name>.json, and what was asked and the headers that
 // matter in contracts/index.json. Run with -update to rewrite them after a
@@ -346,7 +346,7 @@ func checkContract(t *testing.T, name string, v any) {
 		return
 	}
 	if !bytes.Equal(want, buf.Bytes()) {
-		t.Errorf("contracts/%s no longer matches what the CMS answers: %s\nA deliberate change? Rewrite it with go test ./internal/cms -run TestContract -update, and update packages/astro to match.",
+		t.Errorf("contracts/%s no longer matches what the CMS answers: %s\nA deliberate change? Rewrite it with go test ./internal/cms -run TestContract -update, and update librepublish-astro to match.",
 			name, firstDifference(string(want), buf.String()))
 	}
 }

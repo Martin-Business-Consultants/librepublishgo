@@ -21,7 +21,7 @@ This is the Go core of Libre Publish, a rewrite of the Rails core (which
 stays at [libre-publish](https://github.com/Martin-Business-Consultants/libre-publish)
 as the reference). It opens a Rails core's database as it is and imports its
 backups (docs/import.md); its delivery API and webhooks are held to
-`contracts/`, which the Astro integration (`packages/astro`) is tested
+`contracts/`, which the Astro integration ([librepublish-astro](https://github.com/Martin-Business-Consultants/librepublish-astro)) is tested
 against.
 
 ## Running it
