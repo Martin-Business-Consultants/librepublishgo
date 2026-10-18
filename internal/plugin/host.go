@@ -350,13 +350,15 @@ func (h *Host) Call(ctx context.Context, key, export string, input []byte) ([]by
 		return nil, fmt.Errorf("plugin %s isn't enabled", key)
 	}
 	defer p.calls.Done()
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
+	// Compiling (the first call, or the first after it was let go) isn't
+	// the plugin's time: callTimeout starts once it's ready.
 	compiled, err := h.module(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 	defer p.release()
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
 	inst, err := compiled.Instance(ctx, instanceConfig())
 	if err != nil {
 		return nil, err
