@@ -1,138 +1,82 @@
-package main
+package forms
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
-	"strings"
 
-	"github.com/extism/go-pdk"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-// The host's capabilities, as imports (see docs/plugins.md). One that
-// wasn't granted answers {"error": …}.
-//
-//go:wasmimport extism:host/user lp_kv_get
-func lpKvGet(uint64) uint64
-
-//go:wasmimport extism:host/user lp_kv_set
-func lpKvSet(uint64) uint64
-
-//go:wasmimport extism:host/user lp_kv_delete
-func lpKvDelete(uint64) uint64
-
-//go:wasmimport extism:host/user lp_kv_list
-func lpKvList(uint64) uint64
-
-//go:wasmimport extism:host/user lp_mail
-func lpMail(uint64) uint64
-
-//go:wasmimport extism:host/user lp_media_put
-func lpMediaPut(uint64) uint64
-
-//go:wasmimport extism:host/user lp_site
-func lpSite(uint64) uint64
-
-//go:wasmimport extism:host/user lp_log
-func lpLog(uint64) uint64
-
-func call(fn func(uint64) uint64, in string) []byte {
-	mem := pdk.AllocateString(in)
-	defer mem.Free()
-	out := pdk.FindMemory(fn(mem.Offset()))
-	defer out.Free()
-	return out.ReadBytes()
+// call is one call of the plugin: what the host hands it, and the request
+// (empty outside a route). What touches the host is a method on it.
+type call struct {
+	ctx context.Context //nolint:containedctx // a call lives as long as its context
+	api *plugin.API
+	req request
 }
 
-// hostError is the {"error": …} a refused or failed call answers.
-func hostError(b []byte) string {
-	var e struct {
-		Error string `json:"error"`
+// handle is a route's handler, with a call made for it.
+func handle(fn func(c *call) *plugin.Response) plugin.Handler {
+	return func(ctx context.Context, api *plugin.API, req *plugin.Request) (*plugin.Response, error) {
+		return fn(&call{ctx: ctx, api: api, req: request{req}}), nil
 	}
-	json.Unmarshal(b, &e)
-	return e.Error
 }
 
-func kvGet(key string) (string, bool) {
-	var r struct {
-		Found bool   `json:"found"`
-		Value string `json:"value"`
-	}
-	json.Unmarshal(call(lpKvGet, key), &r)
-	return r.Value, r.Found
+func (c *call) kvGet(key string) (string, bool) {
+	v, ok, err := c.api.KVGet(c.ctx, key)
+	return v, ok && err == nil
 }
 
-func kvGetJSON(key string, v any) bool {
-	s, ok := kvGet(key)
+func (c *call) kvGetJSON(key string, v any) bool {
+	s, ok := c.kvGet(key)
 	return ok && json.Unmarshal([]byte(s), v) == nil
 }
 
-func kvSet(key, value string) string {
-	b, _ := json.Marshal(map[string]string{"key": key, "value": value})
-	return hostError(call(lpKvSet, string(b)))
+// kvSet answers "" when it's stored, or why it isn't.
+func (c *call) kvSet(key, value string) string {
+	if err := c.api.KVSet(c.ctx, key, value); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
-func kvSetJSON(key string, v any) string {
+func (c *call) kvSetJSON(key string, v any) string {
 	b, _ := json.Marshal(v)
-	return kvSet(key, string(b))
+	return c.kvSet(key, string(b))
 }
 
-func kvDelete(key string) { call(lpKvDelete, key) }
+func (c *call) kvDelete(key string) {
+	if err := c.api.KVDelete(c.ctx, key); err != nil {
+		c.logf("deleting " + key + ": " + err.Error())
+	}
+}
 
 // kvKeys lists keys under a prefix, a page at a time: the keys and the
 // cursor for the next page ("" at the end).
-func kvKeys(prefix, after string, limit int) ([]string, string) {
-	q, _ := json.Marshal(map[string]any{"prefix": prefix, "after": after, "limit": limit})
-	var r struct {
-		Keys []string `json:"keys"`
-		Next string   `json:"next"`
-	}
-	json.Unmarshal(call(lpKvList, string(q)), &r)
-	return r.Keys, r.Next
+func (c *call) kvKeys(prefix, after string, limit int) ([]string, string) {
+	keys, next, _ := c.api.KVList(c.ctx, prefix, after, limit)
+	return keys, next
 }
 
 // kvAll is every key under a prefix.
-func kvAll(prefix string) []string {
-	var all []string
-	after := ""
-	for {
-		keys, next := kvKeys(prefix, after, 1000)
-		all = append(all, keys...)
-		if next == "" {
-			return all
-		}
-		after = next
-	}
+func (c *call) kvAll(prefix string) []string {
+	keys, _ := c.api.KVAll(c.ctx, prefix)
+	return keys
 }
 
-type site struct {
-	Name         string   `json:"name"`
-	URL          string   `json:"url"`
-	CMSURL       string   `json:"cms_url"`
-	ContactEmail string   `json:"contact_email"`
-	Origins      []string `json:"origins"`
-}
-
-func siteInfo() site {
-	var s site
-	json.Unmarshal(call(lpSite, ""), &s)
+func (c *call) siteInfo() plugin.Site {
+	s, _ := c.api.Site(c.ctx)
 	return s
 }
 
-type email struct {
-	FromName  string   `json:"from_name,omitempty"`
-	FromEmail string   `json:"from_email,omitempty"`
-	ReplyTo   string   `json:"reply_to,omitempty"`
-	To        []string `json:"to"`
-	Cc        []string `json:"cc,omitempty"`
-	Bcc       []string `json:"bcc,omitempty"`
-	Subject   string   `json:"subject"`
-	Text      string   `json:"text"`
-	HTML      string   `json:"html,omitempty"`
-}
-
 // sendMail answers "" when the host took the message, or why it didn't.
-func sendMail(m email) string {
-	b, _ := json.Marshal(m)
-	return hostError(call(lpMail, string(b)))
+func (c *call) sendMail(m mail.Message) string {
+	if err := c.api.Mail(c.ctx, m); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 type upload struct {
@@ -143,77 +87,49 @@ type upload struct {
 	Size     int64  `json:"byte_size"`
 }
 
-func putMedia(filename, contentType, b64, folder string) (upload, string) {
-	in, _ := json.Marshal(map[string]string{"filename": filename, "content_type": contentType, "data": b64, "folder": folder})
-	out := call(lpMediaPut, string(in))
-	if e := hostError(out); e != "" {
-		return upload{}, e
+// putMedia puts a posted file in the media library; "" when it did, or why
+// it didn't.
+func (c *call) putMedia(pf postedFile, folder string) (upload, string) {
+	data := pf.raw
+	if data == nil {
+		var err error
+		if data, err = base64.StdEncoding.DecodeString(pf.Data); err != nil {
+			return upload{}, "data must be base64"
+		}
+	}
+	asset, err := c.api.PutMedia(c.ctx, plugin.Media{Filename: pf.Filename, ContentType: pf.ContentType, Data: data, Folder: folder})
+	if err != nil {
+		return upload{}, err.Error()
 	}
 	var u upload
-	json.Unmarshal(out, &u)
+	b, _ := json.Marshal(asset)
+	if err := json.Unmarshal(b, &u); err != nil {
+		return upload{}, "the media library's answer isn't readable"
+	}
 	return u, ""
 }
 
-func logf(msg string) { call(lpLog, msg) }
+func (c *call) logf(msg string) { c.api.Log(msg) }
 
 // ---- requests and answers -------------------------------------------------
 
-type request struct {
-	Method  string              `json:"method"`
-	Path    string              `json:"path"`
-	Query   map[string][]string `json:"query"`
-	Headers map[string]string   `json:"headers"`
-	Body    string              `json:"body"`
-	IP      string              `json:"ip"`
-	Actor   *struct {
-		Name string `json:"name"`
-	} `json:"actor"`
-}
+type request struct{ *plugin.Request }
 
-func (r request) q(name string) string {
-	if v := r.Query[name]; len(v) > 0 {
-		return v[0]
-	}
-	return ""
-}
+func (r request) q(name string) string { return r.Query.Get(name) }
 
-func (r request) header(name string) string {
-	for k, v := range r.Headers {
-		if strings.EqualFold(k, name) {
-			return v
-		}
-	}
-	return ""
-}
+func (r request) header(name string) string { return r.Header(name) }
 
-type response struct {
-	Status  int               `json:"status"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body    string            `json:"body"`
-}
+func reply(status int, v any) *plugin.Response { return plugin.JSON(status, v) }
 
-func input() request {
-	var req request
-	pdk.InputJSON(&req)
-	return req
-}
-
-func reply(status int, v any) int32 {
-	b, _ := json.Marshal(v)
-	pdk.OutputJSON(response{Status: status, Headers: map[string]string{"Content-Type": "application/json; charset=utf-8"}, Body: string(b)})
-	return 0
-}
-
-func replyRaw(status int, headers map[string]string, body string) int32 {
-	pdk.OutputJSON(response{Status: status, Headers: headers, Body: body})
-	return 0
+func replyRaw(status int, headers map[string]string, body string) *plugin.Response {
+	return &plugin.Response{Status: status, Headers: headers, Body: []byte(body)}
 }
 
 // invalid answers 422 the way the core does, so the admin marks the fields.
-func invalid(errs map[string][]string) int32 {
+func invalid(errs map[string][]string) *plugin.Response {
 	return reply(422, map[string]any{"error": "invalid", "message": "Validation failed", "errors": errs})
 }
 
-func notFound(msg string) int32 {
+func notFound(msg string) *plugin.Response {
 	return reply(404, map[string]string{"error": "not_found", "message": msg})
 }

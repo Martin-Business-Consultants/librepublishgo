@@ -424,8 +424,8 @@ func (a *App) v1Site(c *Ctx) error {
 	for _, p := range a.plugins.List() {
 		if p.Enabled {
 			plugins = append(plugins, p.Key)
-			if sc := p.RawManifest.Map()["site_config"]; sc != nil {
-				config[p.Key] = sc
+			if len(p.Manifest.SiteConfig) > 0 {
+				config[p.Key] = p.Manifest.SiteConfig
 			}
 		}
 	}

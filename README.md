@@ -1,7 +1,7 @@
 # Libre Publish
 
-A headless CMS as one file: the API, the admin, SQLite and a WebAssembly
-plugin host, compiled into a single static binary (about 20 MB, no cgo) for
+A headless CMS as one file: the API, the admin, SQLite and its plugins,
+compiled into a single static binary (about 20 MB, no cgo) for
 Linux, macOS and Windows.
 
 ```sh
@@ -10,10 +10,8 @@ librepublish serve --data ./data
 # open http://localhost:8080/cms/ and make the first administrator
 ```
 
-That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no separate database, no
-restart to add a plugin. It runs in about 40 MB of memory; a plugin in use
-adds its compiled code (the Forms plugin, about 45 MB) until it has been idle
-for ten minutes. The script picks
+That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no
+separate database. It idles at about 20 MB of memory, Forms included. The script picks
 the build for your machine from the latest release and checks it against the
 release's checksums. Without it, download `librepublish-<os>-<arch>` from
 [Releases](https://github.com/Martin-Business-Consultants/librepublishgo/releases)
@@ -35,7 +33,6 @@ make run                      # go run …serve --data ./data, on :8080
 make build                    # dist/librepublish for this machine
 make test                     # vet + the integration tests
 make dist                     # every platform, with checksums.txt
-make plugin                   # dist/visits.wasm, the example plugin
 ```
 
 Releases: set `VERSION` to the release's number (it's what an image built
@@ -54,7 +51,6 @@ builds every platform and publishes them with `checksums.txt`, which
 | | `CMS_DELIVERY_RATE_LIMIT` | Requests a minute per token on `/api/v1` (1200; `0` for none). |
 | | `TRUST_PROXY=1` | Behind Caddy, nginx or a load balancer: read the client's address from `X-Forwarded-For`. |
 | | `LOG_LEVEL` | `debug`, `info` (what `serve` logs by default), `warn` or `error`. |
-| | `PLUGIN_IDLE` | How long a plugin stays compiled without a call (`10m`); then its memory is let go, and its next call loads it back from `DATA_DIR/cache/plugins` in a tenth of a second. |
 | | `LOG_FORMAT` | `text` (the default) or `json`. Each request's line carries its `request_id`, which is also the `X-Request-ID` answered (a proxy's own is kept). |
 
 Put TLS in front of it (Caddy is one line: `cms.example.com { reverse_proxy :8080 }`).
@@ -278,17 +274,17 @@ report for support. It follows the system's light or dark mode, and works on a p
 rebuilds it, and `make ui-dev` serves it with hot reload against `make run`.
 The built `dist/` is committed, so `go install` needs no Node.
 
-## Plugins: WebAssembly, with declared permissions
+## Plugins: Go, with declared permissions
 
-A plugin is one `.wasm` file built with [Extism](https://extism.org), so it
-can be written in Go, Rust, TypeScript, Python, C# or Zig. Its `manifest`
-export says what it is and what it needs. Installing it means uploading it.
-It stays off until a person grants what it asks for, and it is loaded without
-a restart. It can reach only the host's fixed capabilities: live content,
-its own storage, email through Settings › Email, files into the media
-library, outbound HTTP to the hosts it named, and logging. It can't touch the
-database, the files, other plugins or the rest of the network, and each call
-has a time limit. It can add capabilities to the role editor, and its admin
+A plugin is a Go package compiled into the binary (`plugins/<key>`, listed
+in `internal/cms/plugins.go`). Its manifest says what it is and what it
+needs. Installing it, granting it and switching it on happen in the admin,
+without a restart: it stays off until a person grants what it asks for. It
+reaches the CMS only through the API it's handed, which holds the host's
+fixed capabilities as granted: live content, its own storage, email through
+Settings › Email, files into the media library, outbound HTTP to the hosts
+it named, and logging. Each call has a time limit, and one that panics
+answers an error. It can add capabilities to the role editor, and its admin
 screens (its menu, tables, forms with a visual form builder, detail views)
 are data that the admin draws, not code.
 
@@ -300,8 +296,8 @@ over the defaults in Settings › Email), and spam kept out by a honeypot, a
 time check and optional Cloudflare Turnstile.
 
 The contract is in [docs/plugins.md](docs/plugins.md), and
-[plugins/visits](plugins/visits) is a small example in Go. The tests build
-it, install it, grant it, call its public route, watch it hear
+[plugins/visits](plugins/visits) is a small example. The tests install
+it, grant it, call its public route, watch it hear
 `page.published`, and check that it's refused storage once that grant is
 taken back; and they drive Forms from building a form to the emails it
 sends.
@@ -324,9 +320,10 @@ internal/cms/           the core: the App, content, structure, the HTTP API
   delivery.go           /api/v1
   api_*.go              /api
   plugin_env.go         what plugins reach of the CMS
+  plugins.go            the plugins this binary has
 internal/store/         SQLite (modernc.org/sqlite, pure Go), Rails-compatible tables, migrations
 internal/fields/        the field DSL: validation, JSON Schema, references (Rails' rules)
-internal/plugin/        the WebAssembly host
+internal/plugin/        the plugin host and the API plugins call
 internal/webhook/       signed webhook deliveries
 internal/deploy/        build hooks and purges after publishing
 internal/mail/          email: MIME and SMTP
@@ -337,6 +334,7 @@ internal/ratelimit/     per-minute rate limits
 internal/jsonv/         reading loosely typed JSON values
 internal/admin/         the admin, embedded (dist/, built from ui/)
 ui/                     the admin's source: Svelte 5 + Tailwind 4
+plugins/forms/          the Forms plugin (default)
 plugins/visits/         an example plugin
 ```
 
@@ -347,7 +345,7 @@ reach them get a 404:
 
 - **The plugins that were Rails engines**: Forms (submissions), Commerce
   (quote requests, invoices), Leads, AI and Market. These are the first to
-  port to the WebAssembly contract (docs/plugins.md, "Porting the Rails
+  port to the plugin contract (docs/plugins.md, "Porting the Rails
   engines").
 - **Agent runs and reporting**: `cms work`, `run-*`, `recommend`, `findings`,
   `reports`. **Brand** is read from the `brand` setting (Settings › AI, and

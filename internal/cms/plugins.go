@@ -1,0 +1,14 @@
+package cms
+
+import (
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/plugins/forms"
+)
+
+// builtinPlugins are the plugins this binary has. Adding one is adding its
+// package here; the default ones are installed and switched on at first
+// run (plugin.Host.EnsureDefaults), the rest wait for someone to install
+// them from Plugins.
+func builtinPlugins() []*plugin.Module {
+	return []*plugin.Module{forms.Module()}
+}

@@ -1,6 +1,10 @@
-package main
+package forms
 
-import "github.com/extism/go-pdk"
+import (
+	"encoding/json"
+
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+)
 
 const version = "1.1.0"
 
@@ -170,41 +174,63 @@ func screens() []map[string]any {
 	}
 }
 
-//go:wasmexport manifest
-func manifest() int32 {
+// Module is the Forms plugin, as the CMS builds its plugin host with it.
+func Module() *plugin.Module {
 	read, write := "forms:read", "forms:write"
-	pdk.OutputJSON(map[string]any{
-		"key":         "forms",
-		"name":        "Forms",
-		"version":     version,
-		"description": "Build forms visually, keep their submissions, and email them to you and a confirmation to the visitor.",
-		"permissions": map[string]any{"storage": true, "mail": true, "media:write": true, "http": []string{"challenges.cloudflare.com", "www.google.com"}},
-		"capabilities": []map[string]string{
-			{"key": read, "label": "See forms and their submissions"},
-			{"key": write, "label": "Build forms and manage submissions"},
+	r := func(method, path, export string) plugin.Route {
+		return plugin.Route{Method: method, Path: path, Export: export}
+	}
+	public := func(rt plugin.Route) plugin.Route { rt.Public = true; return rt }
+	needs := func(rt plugin.Route, capability string) plugin.Route { rt.Capability = capability; return rt }
+	submit := public(r("POST", "/submit", "submit"))
+	submit.MaxBody = 10 << 20
+	return &plugin.Module{
+		Manifest: plugin.Manifest{
+			Key:         "forms",
+			Name:        "Forms",
+			Version:     version,
+			Description: "Build forms visually, keep their submissions, and email them to you and a confirmation to the visitor.",
+			Permissions: plugin.Grants{Storage: true, Mail: true, MediaWrite: true, HTTP: []string{"challenges.cloudflare.com", "www.google.com"}},
+			Capabilities: []plugin.Capability{
+				{Key: read, Label: "See forms and their submissions"},
+				{Key: write, Label: "Build forms and manage submissions"},
+			},
+			Routes: []plugin.Route{
+				public(r("GET", "/list", "list_public")),
+				public(r("GET", "/definition", "definition")),
+				submit,
+				needs(r("GET", "/forms", "list_forms"), read),
+				needs(r("GET", "/form", "show_form"), read),
+				needs(r("POST", "/form", "save_form"), write),
+				needs(r("POST", "/form/duplicate", "duplicate_form"), write),
+				needs(r("POST", "/form/delete", "delete_form"), write),
+				needs(r("GET", "/submissions", "list_submissions"), read),
+				needs(r("GET", "/submissions.csv", "export_submissions"), read),
+				needs(r("GET", "/submission", "show_submission"), read),
+				needs(r("POST", "/submission/status", "set_submission_status"), write),
+				needs(r("POST", "/submission/delete", "delete_submission"), write),
+			},
+			Admin: json.RawMessage(mustJSON(map[string]any{
+				"menu":    map[string]any{"label": "Forms", "icon": "form", "group": "Content", "badge": "/submissions?count=new"},
+				"screens": screens(),
+			})),
+			SiteConfig: json.RawMessage(mustJSON(map[string]any{"list": "/api/x/forms/list", "definition": "/api/x/forms/definition?form=<slug>", "submit": "/api/x/forms/submit?form=<slug>"})),
 		},
-		"routes": []map[string]any{
-			{"method": "GET", "path": "/list", "export": "list_public", "public": true},
-			{"method": "GET", "path": "/definition", "export": "definition", "public": true},
-			{"method": "POST", "path": "/submit", "export": "submit", "public": true, "max_body": 10 << 20},
-			{"method": "GET", "path": "/forms", "export": "list_forms", "capability": read},
-			{"method": "GET", "path": "/form", "export": "show_form", "capability": read},
-			{"method": "POST", "path": "/form", "export": "save_form", "capability": write},
-			{"method": "POST", "path": "/form/duplicate", "export": "duplicate_form", "capability": write},
-			{"method": "POST", "path": "/form/delete", "export": "delete_form", "capability": write},
-			{"method": "GET", "path": "/submissions", "export": "list_submissions", "capability": read},
-			{"method": "GET", "path": "/submissions.csv", "export": "export_submissions", "capability": read},
-			{"method": "GET", "path": "/submission", "export": "show_submission", "capability": read},
-			{"method": "POST", "path": "/submission/status", "export": "set_submission_status", "capability": write},
-			{"method": "POST", "path": "/submission/delete", "export": "delete_submission", "capability": write},
+		Handlers: map[string]plugin.Handler{
+			"list_public":           handle((*call).listPublic),
+			"definition":            handle((*call).definition),
+			"submit":                handle((*call).submit),
+			"list_forms":            handle((*call).listForms),
+			"show_form":             handle((*call).showForm),
+			"save_form":             handle((*call).saveForm),
+			"duplicate_form":        handle((*call).duplicateForm),
+			"delete_form":           handle((*call).deleteForm),
+			"list_submissions":      handle((*call).listSubmissions),
+			"export_submissions":    handle((*call).exportSubmissions),
+			"show_submission":       handle((*call).showSubmission),
+			"set_submission_status": handle((*call).setSubmissionStatus),
+			"delete_submission":     handle((*call).deleteSubmission),
 		},
-		"admin": map[string]any{
-			"menu":    map[string]any{"label": "Forms", "icon": "form", "group": "Content", "badge": "/submissions?count=new"},
-			"screens": screens(),
-		},
-		"site_config": map[string]any{"list": "/api/x/forms/list", "definition": "/api/x/forms/definition?form=<slug>", "submit": "/api/x/forms/submit?form=<slug>"},
-	})
-	return 0
+		Default: true,
+	}
 }
-
-func main() {}

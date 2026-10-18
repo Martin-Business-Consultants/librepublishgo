@@ -1,5 +1,5 @@
 # Format, lint, vet, race-tested tests with coverage, vulnerability scan,
-# the default plugins' freshness, the admin build, and the Astro integration
+# the admin build, and the Astro integration
 # (packages/astro) with its end-to-end run, on every push and PR.
 #
 # The API contract (contracts/) is gated from both sides: TestContract (in the
@@ -37,19 +37,15 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
-          cache-dependency-path: |
-            go.sum
-            plugins/*/go.sum
+          cache-dependency-path: go.sum
       - name: Dependencies verify and are tidy
         run: |
           go mod verify
           go mod tidy -diff
-      - name: The default plugins' .wasm match their source
-        run: make plugins-check
       - name: Build
-        run: go build ./cmd/... ./internal/...
+        run: go build ./cmd/... ./internal/... ./plugins/...
       - name: Test (race, shuffled, coverage)
-        run: go test -race -shuffle=on -timeout 15m -covermode=atomic -coverprofile=coverage.out ./cmd/... ./internal/...
+        run: go test -race -shuffle=on -timeout 15m -covermode=atomic -coverprofile=coverage.out ./cmd/... ./internal/... ./plugins/...
       - name: Coverage summary
         run: |
           go tool cover -func=coverage.out | tail -1
@@ -73,20 +69,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           check-latest: true
       - name: go vet
-        run: go vet ./cmd/... ./internal/...
-      - name: golangci-lint (core)
+        run: go vet ./cmd/... ./internal/... ./plugins/...
+      - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
-          args: ./cmd/... ./internal/...
+          args: ./cmd/... ./internal/... ./plugins/...
           # A PR is judged on what it adds; a push to a branch, on everything.
           only-new-issues: ${{ github.event_name == 'pull_request' }}
-      - name: go vet (plugins, wasip1)
-        env:
-          GOOS: wasip1
-          GOARCH: wasm
-        run: |
-          for p in plugins/*/; do (cd "$p" && go vet ./...); done
 
   vuln:
     name: govulncheck
@@ -98,7 +88,7 @@ jobs:
         with:
           go-version-input: ${{ env.GO_VERSION }}
           check-latest: true
-          go-package: ./cmd/... ./internal/...
+          go-package: ./cmd/... ./internal/... ./plugins/...
           repo-checkout: false
 
   # The admin (ui/): svelte-check, and the build the binary embeds, which

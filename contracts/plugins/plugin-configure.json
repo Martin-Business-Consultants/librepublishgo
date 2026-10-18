@@ -1,0 +1,70 @@
+{
+  "plugin": {
+    "admin": {
+      "screens": [
+        {
+          "id": "stats",
+          "source": "/stats",
+          "table": {
+            "columns": [
+              {
+                "key": "path",
+                "label": "Page"
+              },
+              {
+                "key": "views",
+                "label": "Views"
+              },
+              {
+                "key": "published_at",
+                "label": "Last published"
+              }
+            ],
+            "rows": "pages"
+          },
+          "title": "Visits"
+        }
+      ]
+    },
+    "built_in": true,
+    "created_at": "2026-01-01T00:00:00.000Z",
+    "description": "Counts the page views a site reports, and when each page was last published.",
+    "enabled": true,
+    "granted": {
+      "content:read": true,
+      "http": [],
+      "mail": false,
+      "media:write": false,
+      "storage": true
+    },
+    "hooks": [
+      "page.published"
+    ],
+    "id": 2,
+    "key": "visits",
+    "name": "Visits",
+    "requested": {
+      "content:read": true,
+      "http": [],
+      "mail": false,
+      "media:write": false,
+      "storage": true
+    },
+    "routes": [
+      {
+        "export": "hit",
+        "method": "POST",
+        "path": "/hit",
+        "public": true
+      },
+      {
+        "export": "stats",
+        "method": "GET",
+        "path": "/stats",
+        "public": false
+      }
+    ],
+    "updated_at": "2026-01-01T00:00:00.000Z",
+    "version": "1.0.0"
+  }
+}

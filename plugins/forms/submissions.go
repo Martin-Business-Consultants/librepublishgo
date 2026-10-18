@@ -1,4 +1,4 @@
-package main
+package forms
 
 import (
 	"bytes"
@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-func loadSubmission(id string) (Submission, bool) {
-	slug, ok := kvGet("all:" + id)
+func (c *call) loadSubmission(id string) (Submission, bool) {
+	slug, ok := c.kvGet("all:" + id)
 	if !ok {
 		return Submission{}, false
 	}
 	var s Submission
-	return s, kvGetJSON("sub:"+slug+":"+id, &s)
+	return s, c.kvGetJSON("sub:"+slug+":"+id, &s)
 }
 
 // summary is how a submission is named in lists: its first name- or
@@ -48,11 +50,10 @@ func summary(f Form, s Submission) (string, string) {
 	return best, excerpt
 }
 
-//go:wasmexport list_submissions
-func listSubmissions() int32 {
-	req := input()
+func (c *call) listSubmissions() *plugin.Response {
+	req := c.req
 	slug, status := req.q("form"), req.q("status")
-	forms := allForms()
+	forms := c.allForms()
 	byslug := map[string]Form{}
 	options := []map[string]string{{"value": "", "label": "Every form"}}
 	total := stats{}
@@ -60,7 +61,7 @@ func listSubmissions() int32 {
 		byslug[f.Slug] = f
 		options = append(options, map[string]string{"value": f.Slug, "label": f.Name})
 		if slug == "" || slug == f.Slug {
-			st := formStats(f.Slug)
+			st := c.formStats(f.Slug)
 			total.New, total.Read, total.Spam, total.Total = total.New+st.New, total.Read+st.Read, total.Spam+st.Spam, total.Total+st.Total
 		}
 	}
@@ -81,10 +82,10 @@ func listSubmissions() int32 {
 	rows := []map[string]any{}
 	after, next := req.q("after"), ""
 	for len(rows) < per {
-		keys, more := kvKeys(prefix, after, 100)
+		keys, more := c.kvKeys(prefix, after, 100)
 		for i, k := range keys {
 			id := k[strings.LastIndex(k, ":")+1:]
-			s, ok := loadSubmission(id)
+			s, ok := c.loadSubmission(id)
 			if !ok || (status == "" && s.Status == "spam") || (status != "" && s.Status != status) {
 				continue
 			}
@@ -106,17 +107,16 @@ func listSubmissions() int32 {
 	return reply(200, map[string]any{"submissions": rows, "next": next, "forms": options, "statuses": statuses})
 }
 
-//go:wasmexport show_submission
-func showSubmission() int32 {
-	req := input()
-	s, ok := loadSubmission(req.q("id"))
+func (c *call) showSubmission() *plugin.Response {
+	req := c.req
+	s, ok := c.loadSubmission(req.q("id"))
 	if !ok {
 		return notFound("No submission " + req.q("id") + ".")
 	}
-	f, _ := loadForm(s.Form)
+	f, _ := c.loadForm(s.Form)
 	// Opening an unread one reads it.
 	if s.Status == "new" {
-		setStatus(&s, "read")
+		c.setStatus(&s, "read")
 	}
 	answers := []map[string]any{}
 	seen := map[string]bool{}
@@ -174,67 +174,63 @@ func showSubmission() int32 {
 		"answers": answers, "details": details, "mail": mail}})
 }
 
-func setStatus(s *Submission, status string) {
+func (c *call) setStatus(s *Submission, status string) {
 	if s.Status == status {
 		return
 	}
-	st := formStats(s.Form)
+	st := c.formStats(s.Form)
 	st.add(s.Status, -1)
 	st.add(status, 1)
 	s.Status = status
-	kvSetJSON("stat:"+s.Form, st)
-	kvSetJSON("sub:"+s.Form+":"+s.ID, *s)
+	c.kvSetJSON("stat:"+s.Form, st)
+	c.kvSetJSON("sub:"+s.Form+":"+s.ID, *s)
 }
 
-//go:wasmexport set_submission_status
-func setSubmissionStatus() int32 {
-	req := input()
+func (c *call) setSubmissionStatus() *plugin.Response {
+	req := c.req
 	var body struct {
 		Status string `json:"status"`
 	}
-	json.Unmarshal([]byte(req.Body), &body)
+	_ = json.Unmarshal(req.Body, &body) // a bad body has no status, refused below
 	if body.Status != "new" && body.Status != "read" && body.Status != "spam" {
 		return invalid(map[string][]string{"status": {"is new, read or spam"}})
 	}
-	s, ok := loadSubmission(req.q("id"))
+	s, ok := c.loadSubmission(req.q("id"))
 	if !ok {
 		return notFound("No submission " + req.q("id") + ".")
 	}
-	setStatus(&s, body.Status)
+	c.setStatus(&s, body.Status)
 	return reply(200, map[string]any{"ok": true, "message": map[string]string{"spam": "Marked as spam.", "read": "Marked as read.", "new": "Marked as unread."}[body.Status]})
 }
 
-//go:wasmexport delete_submission
-func deleteSubmission() int32 {
-	req := input()
-	s, ok := loadSubmission(req.q("id"))
+func (c *call) deleteSubmission() *plugin.Response {
+	req := c.req
+	s, ok := c.loadSubmission(req.q("id"))
 	if !ok {
 		return notFound("No submission " + req.q("id") + ".")
 	}
-	st := formStats(s.Form)
+	st := c.formStats(s.Form)
 	st.add(s.Status, -1)
-	kvSetJSON("stat:"+s.Form, st)
-	kvDelete("sub:" + s.Form + ":" + s.ID)
-	kvDelete("all:" + s.ID)
+	c.kvSetJSON("stat:"+s.Form, st)
+	c.kvDelete("sub:" + s.Form + ":" + s.ID)
+	c.kvDelete("all:" + s.ID)
 	return reply(200, map[string]any{"ok": true, "message": "Deleted."})
 }
 
 // export_submissions is a form's submissions (or every form's) as CSV, a
 // column per field, newest first.
-//
-//go:wasmexport export_submissions
-func exportSubmissions() int32 {
-	req := input()
+func (c *call) exportSubmissions() *plugin.Response {
+	req := c.req
 	slug, status := req.q("form"), req.q("status")
 	forms := []Form{}
 	if slug != "" {
-		f, ok := loadForm(slug)
+		f, ok := c.loadForm(slug)
 		if !ok {
 			return notFound("No form " + slug + ".")
 		}
 		forms = append(forms, f)
 	} else {
-		forms = allForms()
+		forms = c.allForms()
 	}
 	var cols []Field
 	seen := map[string]bool{}
@@ -252,18 +248,18 @@ func exportSubmissions() int32 {
 	for _, c := range cols {
 		head = append(head, strOr(c.Label, c.Name))
 	}
-	w.Write(head)
+	_ = w.Write(head) // to a buffer; Flush reports
 	for _, f := range forms {
-		for _, k := range kvAll("sub:" + f.Slug + ":") {
+		for _, k := range c.kvAll("sub:" + f.Slug + ":") {
 			var s Submission
-			if !kvGetJSON(k, &s) || (status == "" && s.Status == "spam") || (status != "" && s.Status != status) {
+			if !c.kvGetJSON(k, &s) || (status == "" && s.Status == "spam") || (status != "" && s.Status != status) {
 				continue
 			}
 			row := []string{s.SubmittedAt, f.Name, s.Status}
 			for _, c := range cols {
 				row = append(row, csvSafe(display(s.Values[c.Name])))
 			}
-			w.Write(row)
+			_ = w.Write(row)
 		}
 	}
 	w.Flush()

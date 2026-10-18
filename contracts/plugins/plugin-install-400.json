@@ -1,0 +1,4 @@
+{
+  "error": "bad_request",
+  "message": "Name the plugin to install: {\"plugin\": {\"key\": \"…\"}}."
+}

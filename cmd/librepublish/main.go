@@ -33,7 +33,6 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/cli"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/cms"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/datalock"
-	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/update"
 )
@@ -56,12 +55,6 @@ func main() {
 	// Where releases are asked for (GitHub's API unless set: a mirror, a test).
 	if api := os.Getenv("LIBREPUBLISH_RELEASES_API"); api != "" {
 		update.API = strings.TrimRight(api, "/")
-	}
-	// How long a plugin stays compiled without a call (10m unless set).
-	if v := os.Getenv("PLUGIN_IDLE"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			plugin.IdleUnload = d
-		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, stop, os.Args[1:])

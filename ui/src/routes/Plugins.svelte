@@ -1,6 +1,6 @@
 <script>
-  // Plugins: WebAssembly modules, each asking for capabilities that a person
-  // grants (never more than asked), switched on once granted.
+  // Plugins: Go packages built into the binary, each asking for capabilities
+  // that a person grants (never more than asked), switched on once granted.
   import PageHeader from "../lib/components/PageHeader.svelte";
   import Panel from "../lib/components/Panel.svelte";
   import Button from "../lib/components/Button.svelte";
@@ -12,16 +12,18 @@
   import { session } from "../lib/session.svelte.js";
   import { confirm } from "../lib/confirm.svelte.js";
   import { toast, toastError } from "../lib/toast.svelte.js";
-  let list = $state(null), grants = $state({}), uploading = $state(false), input = $state();
+  let list = $state(null), available = $state([]), grants = $state({}), installing = $state(null);
   async function load() {
-    list = (await get("/plugins")).plugins;
+    const r = await get("/plugins");
+    list = r.plugins;
+    available = r.available || [];
     grants = Object.fromEntries(list.map((p) => [p.key, { "content:read": !!p.granted["content:read"], storage: !!p.granted.storage, mail: !!p.granted.mail, "media:write": !!p.granted["media:write"], http: [...(p.granted.http || [])] }]));
   }
   load();
-  async function upload(file) {
-    uploading = true;
-    try { const r = await post("/plugins", file); toast(`Installed ${r.plugin.name} ${r.plugin.version}. Grant what it asks for to switch it on.`); load(); } catch (e) { toastError(e); }
-    uploading = false;
+  async function install(m) {
+    installing = m.key;
+    try { const r = await post("/plugins", { plugin: { key: m.key } }); toast(`Installed ${r.plugin.name} ${r.plugin.version}. Grant what it asks for to switch it on.`); load(); } catch (e) { toastError(e); }
+    installing = null;
   }
   async function configure(p, enabled) {
     try { await patch(`/plugins/${p.key}`, { plugin: { granted: grants[p.key], enabled } }); toast(enabled ? `${p.name} is on.` : `${p.name} is off.`); load(); } catch (e) { toastError(e); }
@@ -32,17 +34,10 @@
   }
 </script>
 
-<PageHeader title="Plugins" subtitle="Each plugin can do only what it asks for and you grant. None can touch the database, the files, or the network beyond the hosts it names.">
-  {#snippet actions()}
-    {#if session.can("plugins:write")}
-      <input type="file" accept=".wasm,application/wasm" class="hidden" bind:this={input} onchange={(e) => { if (e.currentTarget.files[0]) upload(e.currentTarget.files[0]); e.currentTarget.value = ""; }} />
-      <Button icon="add" loading={uploading} onclick={() => input.click()}>Upload plugin</Button>
-    {/if}
-  {/snippet}
-</PageHeader>
+<PageHeader title="Plugins" subtitle="Each plugin can do only what it asks for and you grant: its own storage, email, the media library, and the network only to the hosts it names." />
 
-{#if list && !list.length}
-  <Panel><EmptyState icon="package" title="No plugins">A plugin is one .wasm file, written in Go, Rust, TypeScript or Python against the plugin contract.</EmptyState></Panel>
+{#if list && !list.length && !available.length}
+  <Panel><EmptyState icon="package" title="No plugins">Plugins are Go packages built into Libre Publish; this build has none.</EmptyState></Panel>
 {:else if list}
   <div class="grid gap-4 xl:grid-cols-2">
     {#each list as p (p.key)}
@@ -55,7 +50,7 @@
             {#if p.description}<p class="text-sm text-muted-foreground">{p.description}</p>{/if}
           </div>
         {/snippet}
-        {#snippet actions()}<Badge tone={p.enabled ? "success" : "neutral"}>{p.enabled ? "On" : "Off"}</Badge>{/snippet}
+        {#snippet actions()}{#if !p.built_in}<Badge tone="warning">Not in this build</Badge>{:else}<Badge tone={p.enabled ? "success" : "neutral"}>{p.enabled ? "On" : "Off"}</Badge>{/if}{/snippet}
         <div class="flex flex-col gap-4 p-6">
           <div class="flex flex-col gap-2">
             <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Asks for</h3>
@@ -85,7 +80,7 @@
               <button type="button" class="font-medium text-destructive hover:underline" onclick={() => remove(p)}>Remove</button>
               <div class="flex gap-2">
                 {#if p.enabled}<Button size="sm" onclick={() => configure(p, false)}>Switch off</Button><Button size="sm" variant="primary" onclick={() => configure(p, true)}>Save grants</Button>
-                {:else}<Button size="sm" variant="primary" onclick={() => configure(p, true)}>Grant and switch on</Button>{/if}
+                {:else if p.built_in}<Button size="sm" variant="primary" onclick={() => configure(p, true)}>Grant and switch on</Button>{/if}
               </div>
             </div>
           {/if}
@@ -93,4 +88,24 @@
       </Panel>
     {/each}
   </div>
+  {#if available.length}
+    <h2 class="mt-8 mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground">Available in this build</h2>
+    <div class="grid gap-4 xl:grid-cols-2">
+      {#each available as m (m.key)}
+        <Panel>
+          {#snippet header()}
+            <div class="min-w-0">
+              <h2 class="flex items-center gap-2 text-base font-semibold text-foreground">{m.name}<span class="text-xs font-normal text-muted-foreground">{m.version}</span></h2>
+              {#if m.description}<p class="text-sm text-muted-foreground">{m.description}</p>{/if}
+            </div>
+          {/snippet}
+          {#snippet footer()}
+            {#if session.can("plugins:write")}
+              <div class="flex justify-end"><Button size="sm" icon="add" loading={installing === m.key} onclick={() => install(m)}>Install</Button></div>
+            {/if}
+          {/snippet}
+        </Panel>
+      {/each}
+    </div>
+  {/if}
 {/if}

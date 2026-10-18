@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -67,14 +69,12 @@ func TestKeyedLocksForget(t *testing.T) {
 	}
 }
 
-// A plugin reloaded while it's answering finishes the calls under way on
-// the old module.
+// A plugin reloaded while it's answering keeps answering.
 func TestPluginReloadDuringCalls(t *testing.T) {
 	t.Parallel()
-	wasm := buildVisits(t)
-	s := newSite(t)
+	s := newSiteWithVisits(t)
 	s.must(201, s.do(s.admin, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "about", "title": "About", "status": "published"}}))
-	s.must(201, s.do(s.admin, "POST", "/api/plugins", wasm, "Content-Type", "application/wasm"))
+	s.must(201, s.do(s.admin, "POST", "/api/plugins", map[string]any{"plugin": map[string]any{"key": "visits"}}))
 	s.must(200, s.do(s.admin, "PATCH", "/api/plugins/visits", map[string]any{"plugin": map[string]any{
 		"granted": map[string]any{"storage": true, "content:read": true}, "enabled": true}}))
 
@@ -102,4 +102,25 @@ func TestPluginReloadDuringCalls(t *testing.T) {
 	}
 	close(done)
 	wg.Wait()
+}
+
+// The compiled WebAssembly an older build cached is cleared at start.
+func TestOldPluginCacheCleared(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cache := filepath.Join(dir, "cache", "plugins")
+	if err := os.MkdirAll(cache, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "forms.bin"), []byte("compiled"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(Config{DataDir: dir, SiteKey: "acme", BaseURL: "http://cms.test", NoDefaultPlugins: true, Logger: slog.New(slog.NewTextHandler(t.Output(), nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { server.App().Close() })
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("the old cache is still there (%v)", err)
+	}
 }

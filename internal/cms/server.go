@@ -70,6 +70,9 @@ type Config struct {
 	Admin http.Handler
 	// NoDefaultPlugins leaves out the plugins the binary ships (tests).
 	NoDefaultPlugins bool
+	// Plugins are more plugins for the host to have, beside the built-in
+	// ones (tests).
+	Plugins []*plugin.Module
 	// SchemaDebounce is how long schema.changed waits for writes to settle
 	// (2s when 0).
 	SchemaDebounce time.Duration
@@ -168,12 +171,14 @@ func NewApp(cfg Config) (*App, error) {
 	}
 	a.hooks = webhook.New(db, secrets, a.log, a.tenant(), a.spawn)
 	a.deploys = deploy.New(deploySettings{a}, a.log, a.spawn)
-	// Compiled plugins are kept on disk, so one let go when idle comes back
-	// in a tenth of a second (and a restart doesn't compile them afresh).
-	if err := plugin.UseDiskCache(filepath.Join(cfg.DataDir, "cache", "plugins")); err != nil {
-		a.log.Warn("plugin cache", "err", err)
+	// Builds before 2.1.0 kept compiled WebAssembly plugins here: tens of
+	// MB nothing reads any more.
+	if cfg.DataDir != "" {
+		if err := os.RemoveAll(filepath.Join(cfg.DataDir, "cache", "plugins")); err != nil {
+			a.log.Warn("plugin cache", "err", err)
+		}
 	}
-	a.plugins = plugin.New(pluginEnv{a}, db, a.log, a.spawn, defaultPlugins())
+	a.plugins = plugin.New(pluginEnv{a}, db, a.log, a.spawn, append(builtinPlugins(), a.cfg.Plugins...)...)
 	a.listen()
 	if err := a.seed(); err != nil {
 		a.cancel()
@@ -254,7 +259,7 @@ func (a *App) updateNotice() any {
 }
 
 // Close stops what runs in the background, waits for it, then closes the
-// plugins and the database.
+// database.
 func (a *App) Close() error {
 	a.once.Do(func() {
 		a.mu.Lock()
@@ -264,7 +269,7 @@ func (a *App) Close() error {
 		a.deploys.Stop()
 		a.stopSchemaTimer()
 		a.wg.Wait()
-		a.err = errors.Join(a.plugins.Close(), a.store.Close())
+		a.err = a.store.Close()
 	})
 	return a.err
 }

@@ -15,7 +15,7 @@ import (
 
 // Email goes out through the SMTP server in Settings › Email, from its
 // default name and address unless a message names its own. The core sends
-// its test message with it; plugins granted "mail" send through lp_mail.
+// its test message with it; plugins granted "mail" send through plugin.API.Mail.
 //
 //	settings/email: smtp_host, smtp_port, smtp_security (starttls | tls |
 //	none), smtp_username, smtp_password (sealed at rest), from_name,

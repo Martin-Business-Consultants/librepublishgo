@@ -269,6 +269,130 @@
       "Content-Type": "application/json; charset=utf-8"
     }
   },
+  "plugins/plugin-configure.json": {
+    "request": {
+      "body": {
+        "plugin": {
+          "enabled": true,
+          "granted": {
+            "content:read": true,
+            "http": [
+              "evil.example"
+            ],
+            "mail": true,
+            "storage": true
+          }
+        }
+      },
+      "method": "PATCH",
+      "path": "/api/plugins/visits"
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-forms-admin.json": {
+    "request": {
+      "method": "GET",
+      "path": "/api/plugins/forms/admin"
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-forms.json": {
+    "request": {
+      "method": "GET",
+      "path": "/api/plugins/forms"
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-install-201.json": {
+    "request": {
+      "body": {
+        "plugin": {
+          "key": "visits"
+        }
+      },
+      "method": "POST",
+      "path": "/api/plugins"
+    },
+    "status": 201,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-install-400.json": {
+    "request": {
+      "body": {
+        "plugin": {}
+      },
+      "method": "POST",
+      "path": "/api/plugins"
+    },
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-install-404.json": {
+    "request": {
+      "body": {
+        "plugin": {
+          "key": "nope"
+        }
+      },
+      "method": "POST",
+      "path": "/api/plugins"
+    },
+    "status": 404,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-menus.json": {
+    "request": {
+      "method": "GET",
+      "path": "/api/plugin_menus"
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-not-found.json": {
+    "request": {
+      "method": "GET",
+      "path": "/api/plugins/nope"
+    },
+    "status": 404,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "plugins/plugin-remove-204.json": {
+    "request": {
+      "method": "DELETE",
+      "path": "/api/plugins/visits?purge_data=1"
+    },
+    "status": 204,
+    "headers": {}
+  },
+  "plugins/plugins.json": {
+    "request": {
+      "method": "GET",
+      "path": "/api/plugins"
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
   "webhooks/entry.published.json": {
     "request": {
       "method": "POST",

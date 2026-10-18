@@ -1,15 +1,12 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
-	crand "crypto/rand"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
-	"os"
 	"regexp"
 	"runtime/debug"
 	"slices"
@@ -17,30 +14,37 @@ import (
 	"sync"
 	"time"
 
-	extism "github.com/extism/go-sdk"
-	"github.com/tetratelabs/wazero"
-
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // New is a host keeping plugins in db and reaching the CMS through env;
-// defaults holds the .wasm files the binary ships.
-func New(env Env, db *store.DB, log *slog.Logger, spawn Spawn, defaults fs.FS) *Host {
-	return &Host{env: env, db: db, log: log, spawn: spawn, defaults: defaults}
+// modules are the plugins this binary has. A module whose manifest or
+// handlers don't hold up panics: it's a bug in the build, not the site.
+func New(env Env, db *store.DB, log *slog.Logger, spawn Spawn, modules ...*Module) *Host {
+	h := &Host{env: env, db: db, log: log, spawn: spawn, modules: map[string]*Module{}}
+	for _, m := range modules {
+		if err := m.validate(); err != nil {
+			panic(err)
+		}
+		if h.modules[m.Manifest.Key] != nil {
+			panic("plugin " + m.Manifest.Key + " is registered twice")
+		}
+		h.modules[m.Manifest.Key] = m
+	}
+	return h
 }
 
-// Host loads, runs and installs plugins.
+// Host installs, loads and calls plugins.
 type Host struct {
-	env      Env
-	db       *store.DB
-	log      *slog.Logger
-	spawn    Spawn
-	defaults fs.FS // the plugins the binary ships, *.wasm
+	env     Env
+	db      *store.DB
+	log     *slog.Logger
+	spawn   Spawn
+	modules map[string]*Module // what this binary has, by key
 
-	loadMu    sync.Mutex // one LoadAll at a time
-	sweepOnce sync.Once  // the idle sweep, started by the first LoadAll
-	mu        sync.RWMutex
+	loadMu sync.Mutex // one LoadAll at a time
+	mu     sync.RWMutex
 	// plugins and caps are swapped whole by LoadAll, under mu.
 	plugins map[string]*Plugin
 	caps    []CapGroup
@@ -51,9 +55,11 @@ var keyFormat = regexp.MustCompile(`^[a-z][a-z0-9_]{1,40}$`)
 
 const callTimeout = 10 * time.Second
 
-// LoadAll reads every plugin; each is compiled on its first call (module),
-// not here, and let go when it's idle (sweep). The modules it replaces are
-// closed once the calls running on them finish.
+// LoadAll reads the installed plugins. One the binary has whose manifest
+// changed (a new build) is upgraded in place: it keeps the grants it still
+// asks for, and if it asks for more it's off until someone grants the rest
+// (a default plugin is granted what it asks for). One the binary doesn't
+// have is left off and logged, not fatal: a plugin can't break the site.
 func (h *Host) LoadAll(ctx context.Context) error {
 	h.loadMu.Lock()
 	defer h.loadMu.Unlock()
@@ -61,15 +67,19 @@ func (h *Host) LoadAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	all, err := store.ScanAll(rows, func(r *sql.Rows) (*Plugin, error) {
+	type row struct {
+		p        *Plugin
+		manifest store.JSON
+	}
+	all, err := store.ScanAll(rows, func(r *sql.Rows) (row, error) {
 		p := &Plugin{}
-		var granted store.JSON
-		if err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Version, &p.Description, &p.RawManifest, &granted, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
-			return nil, err
+		var manifest, granted store.JSON
+		if err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Version, &p.Description, &manifest, &granted, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return row{}, err
 		}
 		// An unreadable manifest or grants isn't "asks for nothing, granted
 		// nothing": the plugin is left off, and why is logged.
-		if err := json.Unmarshal(p.RawManifest, &p.Manifest); err != nil {
+		if err := json.Unmarshal(manifest, &p.Manifest); err != nil {
 			h.log.Warn("plugin manifest unreadable; left off", "plugin", p.Key, "err", err)
 			p.Enabled = false
 		}
@@ -79,14 +89,28 @@ func (h *Host) LoadAll(ctx context.Context) error {
 				p.Enabled = false
 			}
 		}
-		return p, nil
+		return row{p, manifest}, nil
 	})
 	if err != nil {
 		return err
 	}
 	plugins := map[string]*Plugin{}
 	var groups []CapGroup
-	for _, p := range all {
+	for _, r := range all {
+		p := r.p
+		p.module = h.modules[p.Key]
+		switch {
+		case p.module == nil:
+			if p.Enabled {
+				h.log.Warn("plugin isn't built into this binary; left off", "plugin", p.Key)
+			}
+			p.Enabled = false
+		case !bytes.Equal(r.manifest, store.MustJSON(p.module.Manifest)):
+			if err := h.upgrade(ctx, p); err != nil {
+				h.log.Warn("plugin upgrade failed; left off", "plugin", p.Key, "err", err)
+				p.Enabled = false
+			}
+		}
 		plugins[p.Key] = p
 		if p.Enabled && len(p.Manifest.Capabilities) > 0 {
 			g := CapGroup{Group: p.Name}
@@ -98,136 +122,32 @@ func (h *Host) LoadAll(ctx context.Context) error {
 		}
 	}
 	h.mu.Lock()
-	old := h.plugins
 	h.plugins, h.caps = plugins, groups
 	h.mu.Unlock()
-	h.retire(old)
-	h.sweepOnce.Do(func() { h.spawn(context.Background(), "plugin sweep", h.sweep) })
 	return nil
 }
 
-// IdleUnload is how long a plugin's compiled module is kept without a
-// call. Compiling it again comes from the disk cache (CompilationCache),
-// about a tenth of a second.
-var IdleUnload = 10 * time.Minute
-
-// module is p's compiled module, compiled now if it isn't (from the disk
-// cache when it's there), with this call counted until release.
-func (h *Host) module(ctx context.Context, p *Plugin) (*extism.CompiledPlugin, error) {
-	p.mod.Lock()
-	defer p.mod.Unlock()
-	if p.compiled == nil {
-		var wasm []byte
-		if err := h.db.QueryRowContext(ctx, `SELECT wasm FROM plugins WHERE id = ?`, p.ID).Scan(&wasm); err != nil {
-			return nil, fmt.Errorf("plugin %s: %w", p.Key, err)
-		}
-		cache := compilationCache()
-		compiled, err := h.compile(ctx, p.Key, wasm, p.Granted, cache)
-		if err != nil {
-			closeCache(ctx, cache)
-			h.log.Warn("plugin failed to load", "plugin", p.Key, "err", err)
-			return nil, fmt.Errorf("plugin %s failed to load: %w", p.Key, err)
-		}
-		p.compiled, p.cache = compiled, cache
+// upgrade brings an installed plugin's record up to the module this binary
+// has.
+func (h *Host) upgrade(ctx context.Context, p *Plugin) error {
+	m := p.module.Manifest
+	granted := intersectGrants(p.Granted, m.Permissions)
+	enabled := p.Enabled && grantsCover(granted, m.Permissions)
+	if p.module.Default {
+		// First party: what it asks for is granted, and it stays as on or
+		// off as it was.
+		granted, enabled = m.Permissions, p.Enabled
 	}
-	p.active++
-	p.lastUsed = time.Now()
-	return p.compiled, nil
-}
-
-func (p *Plugin) release() {
-	p.mod.Lock()
-	p.active--
-	p.lastUsed = time.Now()
-	p.mod.Unlock()
-}
-
-// sweep lets go of the modules idle for IdleUnload, every minute, until
-// the app closes.
-func (h *Host) sweep(ctx context.Context) {
-	tick := time.NewTicker(min(time.Minute, IdleUnload))
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		}
-		h.UnloadIdle(context.WithoutCancel(ctx), IdleUnload)
+	now := store.Now()
+	if _, err := h.db.ExecContext(ctx, `UPDATE plugins SET name=?, version=?, description=?, manifest=?, granted=?, enabled=?, updated_at=? WHERE id=?`,
+		m.Name, m.Version, m.Description, string(store.MustJSON(m)), string(store.MustJSON(granted)), enabled, now.DB(), p.ID); err != nil {
+		return err
 	}
-}
-
-// UnloadIdle lets go of the modules without a call for idle (and none
-// running): the keys it let go of.
-func (h *Host) UnloadIdle(ctx context.Context, idle time.Duration) []string {
-	var freed []string
-	for _, p := range h.List() {
-		p.mod.Lock()
-		if p.compiled != nil && p.active == 0 && time.Since(p.lastUsed) >= idle {
-			p.unload(ctx, h.log)
-			freed = append(freed, p.Key)
-		}
-		p.mod.Unlock()
+	if p.Version != m.Version {
+		h.env.Audit(ctx, nil, "plugin.upgraded", p.ID, p.Key+" "+m.Version, map[string]any{"from": p.Version, "enabled": enabled})
 	}
-	if len(freed) > 0 {
-		debug.FreeOSMemory()
-		h.log.Info("plugins idle: let go of their compiled code", "plugins", freed, "idle", idle.String())
-	}
-	return freed
-}
-
-// Loaded is whether key's module is compiled now.
-func (h *Host) Loaded(key string) bool {
-	p := h.Get(key)
-	if p == nil {
-		return false
-	}
-	p.mod.Lock()
-	defer p.mod.Unlock()
-	return p.compiled != nil
-}
-
-// retire closes replaced modules once their calls finish, in the
-// background so a reload doesn't wait on a slow plugin.
-func (h *Host) retire(old map[string]*Plugin) {
-	if len(old) == 0 {
-		return
-	}
-	closeAll := func(ctx context.Context) {
-		if err := closePlugins(context.WithoutCancel(ctx), old); err != nil {
-			h.log.Warn("plugins", "err", err)
-		}
-	}
-	if !h.spawn(context.Background(), "plugin reload", closeAll) {
-		closeAll(context.Background())
-	}
-}
-
-func closePlugins(ctx context.Context, plugins map[string]*Plugin) error {
-	var errs []error
-	for _, p := range plugins {
-		p.calls.Wait()
-		p.mod.Lock()
-		if p.compiled != nil {
-			errs = append(errs, p.compiled.Close(ctx))
-			p.compiled = nil
-		}
-		closeCache(ctx, p.cache)
-		p.cache = nil
-		p.mod.Unlock()
-	}
-	return errors.Join(errs...)
-}
-
-// Close closes every module, once the calls running on them finish.
-func (h *Host) Close() error {
-	h.loadMu.Lock()
-	defer h.loadMu.Unlock()
-	h.mu.Lock()
-	old := h.plugins
-	h.plugins, h.caps = nil, nil
-	h.mu.Unlock()
-	return closePlugins(context.Background(), old)
+	p.Name, p.Version, p.Description, p.Manifest, p.Granted, p.Enabled, p.UpdatedAt = m.Name, m.Version, m.Description, m, granted, enabled, now
+	return nil
 }
 
 // CapGroups is the enabled plugins' capabilities.
@@ -249,6 +169,21 @@ func (h *Host) List() []*Plugin {
 	return out
 }
 
+// Available is the manifests of the plugins this binary has that aren't
+// installed, by key.
+func (h *Host) Available() []Manifest {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := []Manifest{}
+	for key, m := range h.modules {
+		if h.plugins[key] == nil {
+			out = append(out, m.Manifest)
+		}
+	}
+	slices.SortFunc(out, func(a, b Manifest) int { return strings.Compare(a.Key, b.Key) })
+	return out
+}
+
 // Get is the plugin installed as key, nil when there's none.
 func (h *Host) Get(key string) *Plugin {
 	h.mu.RLock()
@@ -256,260 +191,100 @@ func (h *Host) Get(key string) *Plugin {
 	return h.plugins[key]
 }
 
-// compile builds the module with exactly the host functions its grants
-// allow; what wasn't granted isn't there to call.
-func (h *Host) compile(ctx context.Context, key string, wasm []byte, grants Grants, cache wazero.CompilationCache) (*extism.CompiledPlugin, error) {
-	manifest := extism.Manifest{
-		Wasm:         []extism.Wasm{extism.WasmData{Data: wasm, Name: key}},
-		AllowedHosts: grants.HTTP,
-		Timeout:      uint64(callTimeout.Milliseconds()), //nolint:gosec // a positive constant
-		Memory:       &extism.ManifestMemory{MaxPages: 1024, MaxHttpResponseBytes: 4 << 20, MaxVarBytes: 1 << 20},
+// enabled is the plugin installed as key when it's on, and the API its
+// grants allow; nil when it's off.
+func (h *Host) enabled(key string) (*Plugin, *API) {
+	p := h.Get(key)
+	if p == nil || !p.Enabled || p.module == nil {
+		return nil, nil
 	}
-	if manifest.AllowedHosts == nil {
-		manifest.AllowedHosts = []string{}
-	}
-	cfg := extism.PluginConfig{EnableWasi: true}
-	if cache != nil {
-		cfg.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(cache)
-	}
-	return extism.NewCompiledPlugin(ctx, manifest, cfg, h.hostFunctions(key, grants))
+	return p, &API{h: h, key: p.Key, grants: p.Granted}
 }
 
-// CompilationCache is, when set, one cache every compile shares, kept for
-// the process's life: what tests use, compiling the same few plugins over
-// and over. A server keeps compiled modules on disk instead (UseDiskCache).
-var CompilationCache wazero.CompilationCache
-
-// cacheDir is where compiled modules are kept on disk (UseDiskCache): a
-// module let go when idle comes back from there in a tenth of a second
-// rather than seconds of compiling.
-var cacheDir string
-
-// UseDiskCache keeps compiled modules in dir (DATA_DIR/cache/plugins).
-func UseDiskCache(dir string) error {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return err
-	}
-	cacheDir = dir
-	return nil
+// guard runs fn within the time limit, a panic in it answering an error
+// rather than taking the server down.
+func guard(ctx context.Context, what string, fn func(context.Context) error) (err error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s panicked: %v\n%s", what, r, debug.Stack())
+		}
+	}()
+	return fn(ctx)
 }
 
-// compilationCache is the cache one compile uses: the shared one when set,
-// else its own on the disk cache. Its own, because a wazero cache also
-// keeps every module it compiled in memory until it's closed: a module's
-// own cache is closed when the module is let go, and the native code with
-// it, where a shared one would hold every module ever loaded.
-func compilationCache() wazero.CompilationCache {
-	if CompilationCache != nil {
-		return CompilationCache
-	}
-	if cacheDir == "" {
-		return nil
-	}
-	cache, err := wazero.NewCompilationCacheWithDir(cacheDir)
-	if err != nil {
-		return nil
-	}
-	return cache
-}
-
-// closeCache closes a module's own cache (never the shared one).
-func closeCache(ctx context.Context, cache wazero.CompilationCache) {
-	if cache != nil && cache != CompilationCache {
-		_ = cache.Close(ctx)
-	}
-}
-
-// unload lets go of p's compiled module and its cache; p.mod is held.
-func (p *Plugin) unload(ctx context.Context, log *slog.Logger) {
-	if err := p.compiled.Close(ctx); err != nil {
-		log.Warn("plugin unload", "plugin", p.Key, "err", err)
-	}
-	closeCache(ctx, p.cache)
-	p.compiled, p.cache = nil, nil
-}
-
-// instanceConfig gives each call the real clock and real randomness
-// (wazero's defaults are fixed, for reproducible runs).
-func instanceConfig() extism.PluginInstanceConfig {
-	return extism.PluginInstanceConfig{ModuleConfig: wazero.NewModuleConfig().WithSysWalltime().WithSysNanotime().WithRandSource(crand.Reader)}
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
-}
-
-// Call runs one export of an enabled plugin with input, in a fresh
-// instance, within the time limit.
-func (h *Host) Call(ctx context.Context, key, export string, input []byte) ([]byte, error) {
-	p := h.acquire(key)
+// Serve hands req to the handler an enabled plugin's route names.
+func (h *Host) Serve(ctx context.Context, key, export string, req *Request) (*Response, error) {
+	p, api := h.enabled(key)
 	if p == nil {
 		return nil, fmt.Errorf("plugin %s isn't enabled", key)
 	}
-	defer p.calls.Done()
-	// Compiling (the first call, or the first after it was let go) isn't
-	// the plugin's time: callTimeout starts once it's ready.
-	compiled, err := h.module(ctx, p)
-	if err != nil {
-		return nil, err
+	handler := p.module.Handlers[export]
+	if handler == nil {
+		return nil, fmt.Errorf("plugin %s has no handler %s", key, export)
 	}
-	defer p.release()
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	inst, err := compiled.Instance(ctx, instanceConfig())
-	if err != nil {
-		return nil, err
+	var res *Response
+	err := guard(ctx, "plugin "+key+"/"+export, func(ctx context.Context) error {
+		var err error
+		res, err = handler(ctx, api, req)
+		return err
+	})
+	if err == nil && res == nil {
+		err = fmt.Errorf("plugin %s/%s answered nothing", key, export)
 	}
-	defer inst.Close(ctx)
-	if !inst.FunctionExists(export) {
-		return nil, fmt.Errorf("plugin %s has no export %s", key, export)
-	}
-	exit, out, err := inst.CallWithContext(ctx, export, input)
-	if err != nil {
-		return nil, fmt.Errorf("plugin %s/%s: %w", key, export, err)
-	}
-	if exit != 0 {
-		return nil, fmt.Errorf("plugin %s/%s exited %d: %s", key, export, exit, inst.GetError())
-	}
-	return out, nil
-}
-
-// acquire is an enabled plugin with its call counted (done with
-// p.calls.Done), so a reload can't close it mid-call; nil when it's off.
-func (h *Host) acquire(key string) *Plugin {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	p := h.plugins[key]
-	if p == nil || !p.Enabled {
-		return nil
-	}
-	p.calls.Add(1)
-	return p
+	return res, err
 }
 
 // Emit hands an event to every enabled plugin that hooks it, in the
 // background: a slow or failing plugin never holds up a save.
 func (h *Host) Emit(ctx context.Context, event string, data any) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		h.log.Warn("plugin hook", "event", event, "err", err)
+		return
+	}
 	for _, p := range h.List() {
 		if !p.Enabled || !slices.Contains(p.Manifest.Hooks, event) {
 			continue
 		}
 		h.spawn(ctx, "plugin hook", func(ctx context.Context) {
-			body, _ := json.Marshal(map[string]any{"event": event, "data": data})
-			if _, err := h.Call(ctx, p.Key, "on_event", body); err != nil {
+			p, api := h.enabled(p.Key)
+			if p == nil {
+				return
+			}
+			err := guard(ctx, "plugin "+p.Key+" on "+event, func(ctx context.Context) error {
+				return p.module.OnEvent(ctx, api, event, body)
+			})
+			if err != nil {
 				h.log.Warn("plugin hook", "plugin", p.Key, "event", event, "err", err)
 			}
 		})
 	}
 }
 
-// Install reads a module's manifest (calling its `manifest` export in a
-// sandbox with nothing granted) and stores it, off until a person grants
-// what it asks for and enables it.
-func (h *Host) Install(ctx context.Context, actor Actor, wasm []byte) (*Plugin, error) {
-	probe, err := h.compile(ctx, "probe", wasm, Grants{}, nil)
-	if err != nil {
-		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "That isn't a WebAssembly plugin this CMS can load: " + err.Error()}
+// Install installs a plugin this binary has, off until a person grants what
+// it asks for and enables it.
+func (h *Host) Install(ctx context.Context, actor Actor, key string) (*Plugin, error) {
+	m := h.modules[key]
+	if m == nil {
+		return nil, apierr.NotFound("This build has no plugin " + key + ".")
 	}
-	// Compiling a module to read its manifest takes a burst of memory (a
-	// hundred MB or more for a Go-built plugin): once it's closed, that's
-	// handed back to the system rather than left to Go's slow return.
-	defer debug.FreeOSMemory()
-	defer probe.Close(ctx)
-	inst, err := probe.Instance(ctx, instanceConfig())
-	if err != nil {
-		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "The plugin wouldn't start: " + err.Error()}
-	}
-	defer inst.Close(ctx)
-	if !inst.FunctionExists("manifest") {
-		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "The plugin has no `manifest` export saying what it is and what it needs."}
-	}
-	_, out, err := inst.CallWithContext(ctx, "manifest", nil)
-	if err != nil {
-		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "Its manifest export failed: " + err.Error()}
-	}
-	var m Manifest
-	if err := json.Unmarshal(out, &m); err != nil {
-		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "Its manifest isn't JSON: " + err.Error()}
-	}
-	if err := m.validate(); err != nil {
-		return nil, err
+	if p := h.Get(key); p != nil {
+		return p, nil
 	}
 	now := store.Now().DB()
-	// A new version of an installed plugin keeps its grants where they're
-	// still asked for, and stays off until re-enabled if it asks for more.
-	var existing int64
-	var oldGranted store.JSON
-	var wasEnabled bool
-	err = h.db.QueryRowContext(ctx, `SELECT id, granted, enabled FROM plugins WHERE key = ?`, m.Key).Scan(&existing, &oldGranted, &wasEnabled)
-	granted := Grants{}
-	enabled := false
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	if err == nil {
-		var old Grants
-		if len(oldGranted) > 0 {
-			if err := json.Unmarshal(oldGranted, &old); err != nil {
-				return nil, fmt.Errorf("plugin %s: reading its grants: %w", m.Key, err)
-			}
-		}
-		granted = intersectGrants(old, m.Permissions)
-		enabled = wasEnabled && grantsCover(granted, m.Permissions)
-		_, err = h.db.ExecContext(ctx, `UPDATE plugins SET name=?, version=?, description=?, manifest=?, granted=?, enabled=?, wasm=?, updated_at=? WHERE id=?`,
-			m.Name, m.Version, m.Description, string(out), string(store.MustJSON(granted)), enabled, wasm, now, existing)
-	} else {
-		_, err = h.db.ExecContext(ctx, `INSERT INTO plugins (key, name, version, description, manifest, granted, enabled, wasm, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?,?)`,
-			m.Key, m.Name, m.Version, m.Description, string(out), string(store.MustJSON(granted)), wasm, now, now)
-	}
+	_, err := h.db.ExecContext(ctx, `INSERT INTO plugins (key, name, version, description, manifest, granted, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,0,?,?)
+		ON CONFLICT(key) DO NOTHING`,
+		m.Manifest.Key, m.Manifest.Name, m.Manifest.Version, m.Manifest.Description, string(store.MustJSON(m.Manifest)), string(store.MustJSON(Grants{HTTP: []string{}})), now, now)
 	if err != nil {
 		return nil, err
 	}
-	h.env.Audit(ctx, actor, "plugin.installed", 0, m.Key+" "+m.Version, map[string]any{"permissions": m.Permissions})
+	h.env.Audit(ctx, actor, "plugin.installed", 0, key+" "+m.Manifest.Version, map[string]any{"permissions": m.Manifest.Permissions})
 	if err := h.LoadAll(ctx); err != nil {
 		return nil, err
 	}
-	return h.Get(m.Key), nil
-}
-
-// validate checks what a manifest says: its key, name and version, its
-// routes and capabilities, and the hosts it asks to reach.
-func (m *Manifest) validate() error {
-	inv := apierr.Invalid{}
-	if !keyFormat.MatchString(m.Key) {
-		inv.Add("key", "must be lowercase letters, digits and _, starting with a letter")
-	}
-	if m.Name == "" {
-		inv.Add("name", "can't be blank")
-	}
-	if m.Version == "" {
-		inv.Add("version", "can't be blank")
-	}
-	for i, c := range m.Capabilities {
-		if !capFormat.MatchString(c.Key) || !strings.HasPrefix(c.Key, m.Key+":") || c.Label == "" {
-			inv.Add(fmt.Sprintf("capabilities[%d]", i), "needs a label and a key \""+m.Key+":<name>\"")
-		}
-	}
-	for i, r := range m.Routes {
-		if r.Export == "" || !strings.HasPrefix(r.Path, "/") {
-			inv.Add(fmt.Sprintf("routes[%d]", i), "needs a path starting with / and an export")
-		}
-		if r.MaxBody > maxBody {
-			inv.Add(fmt.Sprintf("routes[%d].max_body", i), "is at most 10 MB")
-		}
-		if r.Capability != "" && r.Capability != "plugins:read" && r.Capability != "plugins:write" && !slices.ContainsFunc(m.Capabilities, func(c Capability) bool { return c.Key == r.Capability }) {
-			inv.Add(fmt.Sprintf("routes[%d].capability", i), "must be one the plugin declares under capabilities")
-		}
-	}
-	for _, host := range m.Permissions.HTTP {
-		if host == "*" || strings.Contains(host, "/") {
-			inv.Add("permissions.http", "names hosts, not \"*\" or URLs: "+host)
-		}
-	}
-	return inv.Err()
+	return h.Get(key), nil
 }
 
 // intersectGrants is what's both granted and asked for.
@@ -552,6 +327,9 @@ func (h *Host) Configure(ctx context.Context, actor Actor, key string, grant *Gr
 	if enabled != nil {
 		on = *enabled
 	}
+	if on && p.module == nil {
+		return p, apierr.Conflict("This build doesn't have the plugin " + key + ", so it can't be switched on.")
+	}
 	if _, err := h.db.ExecContext(ctx, `UPDATE plugins SET granted = ?, enabled = ?, updated_at = ? WHERE key = ?`, string(store.MustJSON(granted)), on, store.Now().DB(), key); err != nil {
 		return nil, err
 	}
@@ -559,11 +337,7 @@ func (h *Host) Configure(ctx context.Context, actor Actor, key string, grant *Gr
 	if err := h.LoadAll(ctx); err != nil {
 		return nil, err
 	}
-	p = h.Get(key)
-	if on && !p.Enabled {
-		return p, apierr.Conflict("The plugin failed to load and was left off: see the server log.")
-	}
-	return p, nil
+	return h.Get(key), nil
 }
 
 // Remove uninstalls a plugin, and its storage too when purgeData.

@@ -1,43 +1,103 @@
-// Package plugin hosts plugins: WebAssembly modules (Extism's ABI, so they
-// can be written in Go, Rust, TypeScript, Python, …) that can do only what
-// they declared and a person granted. Each one is a single .wasm file; installing it is
-// uploading it, and loading it needs no restart.
+// Package plugin hosts plugins: Go packages compiled into the binary, each a
+// Module that does only what it declared and a person granted. Adding one
+// is adding its package to the list the CMS builds the host with
+// (internal/cms/plugins.go); installing it, granting it and switching it on
+// happen at runtime, with no restart.
 //
-// What a plugin can reach is the host's fixed set of capabilities:
+// What a plugin reaches of the CMS is the *API it's handed on each call,
+// holding the host's fixed set of capabilities:
 //
-//	content:read   lp_content(query) — live pages, entries and globals
-//	storage        lp_kv_get / lp_kv_set / lp_kv_delete / lp_kv_list — its own namespace
-//	mail           lp_mail(message) — email through Settings › Email
-//	media:write    lp_media_put(file) — a file into the media library
-//	http           outbound requests, only to the hosts it declared
-//	log, site      lp_log(message), lp_site() — always
+//	content:read   API.Content — live pages, entries and globals
+//	storage        API.KVGet / KVSet / KVDelete / KVList / KVCount — its own namespace
+//	mail           API.Mail — email through Settings › Email
+//	media:write    API.PutMedia — a file into the media library
+//	http           API.HTTP — outbound requests, only to the hosts it declared
+//	log, site      API.Log, API.Site — always
 //
-// It is called through what its manifest declares: hooks (events such as
-// page.published, to its on_event export), routes (served under
-// /api/x/<key>/…, to the export each names) and admin screens (described as
-// data: forms the admin draws, no code in the admin).
-//
-// A plugin can't touch the database, the filesystem, other plugins' storage
-// or the network beyond its hosts, and a call that runs past its time limit
-// is stopped. See docs/plugins.md.
+// A capability that wasn't granted answers an error instead of acting. A
+// plugin is called through what its manifest declares: hooks (events such
+// as page.published, to its OnEvent), routes (served under /api/x/<key>/…,
+// to the handler each names) and admin screens (described as data: forms
+// the admin draws, no code in the admin). A call that panics answers an
+// error, and each call's context ends after the time limit. See
+// docs/plugins.md.
 package plugin
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
-	"sync"
-	"time"
-
-	extism "github.com/extism/go-sdk"
-	"github.com/tetratelabs/wazero"
+	"slices"
+	"strings"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
-// Manifest is what a plugin says it is and needs (its manifest export).
+// Module is a plugin, as its package builds it.
+type Module struct {
+	Manifest Manifest
+	// Handlers serve its routes, by the name each route gives as Export.
+	Handlers map[string]Handler
+	// OnEvent hears the events its manifest hooks; nil when it hooks none.
+	OnEvent func(ctx context.Context, api *API, event string, data json.RawMessage) error
+	// Default plugins are installed on first run, granted what they ask for
+	// and switched on.
+	Default bool
+}
+
+// Handler answers one of a plugin's routes.
+type Handler func(ctx context.Context, api *API, req *Request) (*Response, error)
+
+// Request is a call to a plugin's route.
+type Request struct {
+	Method  string
+	Path    string
+	Query   url.Values
+	Headers map[string]string // Content-Type, Accept, User-Agent, Referer, Origin, X-Requested-With
+	Body    []byte            // up to the route's MaxBody
+	IP      string
+	Actor   *Caller // nil on a public route called by no one signed in
+}
+
+// Header is the request's header name, in any case.
+func (r *Request) Header(name string) string {
+	for k, v := range r.Headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
+// Caller is who's calling a route.
+type Caller struct {
+	Name         string   `json:"name"`
+	Type         string   `json:"type"` // User or ServiceToken
+	Capabilities []string `json:"capabilities"`
+}
+
+// Response is a route's answer. Set-Cookie is dropped, and it's served with
+// Content-Security-Policy: sandbox.
+type Response struct {
+	Status  int
+	Headers map[string]string
+	Body    []byte
+}
+
+// JSON is a response with v as its JSON body.
+func JSON(status int, v any) *Response {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return &Response{Status: http.StatusInternalServerError, Headers: map[string]string{"Content-Type": "application/json; charset=utf-8"}, Body: []byte(`{"error":"internal"}`)}
+	}
+	return &Response{Status: status, Headers: map[string]string{"Content-Type": "application/json; charset=utf-8"}, Body: b}
+}
+
+// Manifest is what a plugin says it is and needs.
 type Manifest struct {
 	Key         string          `json:"key"`
 	Name        string          `json:"name"`
@@ -68,11 +128,20 @@ type Grants struct {
 	HTTP        []string `json:"http"`
 }
 
+// MarshalJSON writes no hosts as [], never null.
+func (g Grants) MarshalJSON() ([]byte, error) {
+	type plain Grants
+	if g.HTTP == nil {
+		g.HTTP = []string{}
+	}
+	return json.Marshal(plain(g))
+}
+
 // Route is one a plugin serves under /api/x/<key>/.
 type Route struct {
 	Method string `json:"method"`
 	Path   string `json:"path"`
-	Export string `json:"export"`
+	Export string `json:"export"` // the handler, in Module.Handlers
 	// Public routes answer anyone (a form's submissions). The rest need a
 	// signed-in caller with Capability: one of the plugin's own, or by
 	// default plugins:read for GET and plugins:write for anything else.
@@ -87,31 +156,20 @@ const maxBody = 10 << 20
 
 var capFormat = regexp.MustCompile(`^[a-z][a-z0-9_]*:[a-z][a-z0-9_]*$`)
 
-// Plugin is one installed module.
+// Plugin is one installed plugin.
 type Plugin struct {
 	ID          int64
 	Key         string
 	Name        string
 	Version     string
 	Description string
-	RawManifest store.JSON // as the plugin declared it
-	Manifest    Manifest   // RawManifest, read
+	Manifest    Manifest
 	Granted     Grants
 	Enabled     bool
 	CreatedAt   store.Time
 	UpdatedAt   store.Time
 
-	// The compiled module, made on the first call and let go after
-	// IdleUnload without one (a compiled module is tens of MB of native
-	// code), under mod; active counts the calls running on it.
-	mod      sync.Mutex
-	compiled *extism.CompiledPlugin
-	cache    wazero.CompilationCache // compiled's own, closed with it (cacheDir)
-	active   int
-	lastUsed time.Time
-	// calls is the calls running, which a reload waits out before closing
-	// the module.
-	calls sync.WaitGroup
+	module *Module // nil when the binary doesn't have it
 }
 
 // Need is the capability a route asks of its caller.
@@ -142,16 +200,36 @@ type Env interface {
 	Setting(ctx context.Context, key string) (map[string]any, error)
 	// ReplaceSetting writes data as key's, replacing what was there.
 	ReplaceSetting(ctx context.Context, key string, data map[string]any) error
-	// Site is lp_site's answer: the site's name, address, locale, contact.
-	Site(ctx context.Context) (map[string]any, error)
+	// Site is API.Site's answer: the site's name, address, locale, contact.
+	Site(ctx context.Context) (Site, error)
 	SendMail(ctx context.Context, m mail.Message) error
 	// PutMedia adds a file to the media library and answers it as the
 	// API shows assets.
-	PutMedia(ctx context.Context, f Media) (any, error)
-	// Content answers lp_content's JSON query with live content.
-	Content(ctx context.Context, query string) (any, error)
+	PutMedia(ctx context.Context, f Media) (map[string]any, error)
+	// Content answers a query for live content, shaped as /api/v1 shapes it.
+	Content(ctx context.Context, q ContentQuery) (any, error)
 	// Audit records what someone did to a plugin.
 	Audit(ctx context.Context, actor Actor, action string, id int64, label string, meta map[string]any)
+}
+
+// Site is the site a plugin runs on.
+type Site struct {
+	Name         string   `json:"name"`
+	URL          string   `json:"url"`
+	CMSURL       string   `json:"cms_url"`
+	Locale       string   `json:"locale"`
+	ContactEmail string   `json:"contact_email"`
+	Origins      []string `json:"origins"` // the site's own, as CORS allows them
+}
+
+// ContentQuery asks for one of: a page by path, every live page, a
+// collection's live entries (or one, by slug), or a global.
+type ContentQuery struct {
+	Page       string
+	Pages      bool
+	Collection string
+	Entry      string
+	Global     string
 }
 
 // Media is a file a plugin puts in the media library.
@@ -164,3 +242,63 @@ type Media struct {
 // Spawn runs fn in the background for as long as the app lives; false when
 // it's closed (fn doesn't run).
 type Spawn func(ctx context.Context, name string, fn func(context.Context)) bool
+
+// validate checks a module: its manifest, and a handler for each route.
+func (m *Module) validate() error {
+	if err := m.Manifest.validate(); err != nil {
+		return err
+	}
+	for _, r := range m.Manifest.Routes {
+		if m.Handlers[r.Export] == nil {
+			return fmt.Errorf("plugin %s: route %s %s names %q, which has no handler", m.Manifest.Key, r.Method, r.Path, r.Export)
+		}
+	}
+	if len(m.Manifest.Hooks) > 0 && m.OnEvent == nil {
+		return fmt.Errorf("plugin %s hooks events but has no OnEvent", m.Manifest.Key)
+	}
+	return nil
+}
+
+// validate checks what a manifest says: its key, name and version, its
+// routes and capabilities, and the hosts it asks to reach.
+func (m *Manifest) validate() error {
+	var errs []string
+	if !keyFormat.MatchString(m.Key) {
+		errs = append(errs, "key must be lowercase letters, digits and _, starting with a letter")
+	}
+	if m.Name == "" {
+		errs = append(errs, "name can't be blank")
+	}
+	if m.Version == "" {
+		errs = append(errs, "version can't be blank")
+	}
+	for i, c := range m.Capabilities {
+		if !capFormat.MatchString(c.Key) || !strings.HasPrefix(c.Key, m.Key+":") || c.Label == "" {
+			errs = append(errs, fmt.Sprintf("capabilities[%d] needs a label and a key \"%s:<name>\"", i, m.Key))
+		}
+	}
+	for i, r := range m.Routes {
+		if r.Export == "" || !strings.HasPrefix(r.Path, "/") {
+			errs = append(errs, fmt.Sprintf("routes[%d] needs a path starting with / and an export", i))
+		}
+		if r.MaxBody > maxBody {
+			errs = append(errs, fmt.Sprintf("routes[%d].max_body is at most 10 MB", i))
+		}
+		if r.Capability != "" && r.Capability != "plugins:read" && r.Capability != "plugins:write" && !slices.ContainsFunc(m.Capabilities, func(c Capability) bool { return c.Key == r.Capability }) {
+			errs = append(errs, fmt.Sprintf("routes[%d].capability must be one the plugin declares under capabilities", i))
+		}
+	}
+	for _, host := range m.Permissions.HTTP {
+		if host == "*" || strings.Contains(host, "/") {
+			errs = append(errs, "permissions.http names hosts, not \"*\" or URLs: "+host)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("plugin %s: %s", m.Key, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// BuiltIn says whether this binary has the plugin; one it doesn't (a
+// plugin from an older build) stays off.
+func (p *Plugin) BuiltIn() bool { return p.module != nil }

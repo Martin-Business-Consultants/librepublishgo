@@ -1,0 +1,21 @@
+{
+  "menus": [
+    {
+      "badge": "/submissions?count=new",
+      "group": "Content",
+      "icon": "form",
+      "items": [
+        {
+          "label": "All forms",
+          "screen": "forms"
+        },
+        {
+          "label": "Submissions",
+          "screen": "submissions"
+        }
+      ],
+      "key": "forms",
+      "label": "Forms"
+    }
+  ]
+}

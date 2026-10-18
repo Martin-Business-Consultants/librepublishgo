@@ -22,6 +22,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/plugins/visits"
 )
 
 // The contract: what a site (packages/astro) is built against, recorded
@@ -51,7 +54,9 @@ var contractHeaders = []string{"Content-Type", "Cache-Tag", "Cache-Control", "Lo
 
 func TestContract(t *testing.T) {
 	t.Parallel()
-	s := newSiteWith(t, Config{BaseURL: contractBase, Mailer: &captureMailer{}, SchemaDebounce: 20 * time.Millisecond})
+	// The example plugin is in this build, not installed: the plugins API
+	// shows an available one, and installing it.
+	s := newSiteWith(t, Config{BaseURL: contractBase, Mailer: &captureMailer{}, SchemaDebounce: 20 * time.Millisecond, Plugins: []*plugin.Module{visits.Module()}})
 	hooks := recordWebhooks(t, s)
 	seedContract(t, s)
 
@@ -160,12 +165,54 @@ func TestContract(t *testing.T) {
 		t.Fatalf("schema.changed data keys %v, contract %v", got, want)
 	}
 
+	maps.Copy(files, recordPlugins(t, s))
+
 	index := map[string]exchange{}
 	for name, x := range files {
 		checkContract(t, name, x.Body)
 		index[name] = x
 	}
 	checkContract(t, "index.json", index)
+}
+
+// recordPlugins records the plugins API, as an administrator calls it:
+// the list (installed and available), one plugin, installing, granting and
+// switching on, a plugin's admin screens and menus, and removing.
+func recordPlugins(t *testing.T, s *site) map[string]exchange {
+	t.Helper()
+	files := map[string]exchange{}
+	call := func(name, method, path string, body map[string]any, want int) resp {
+		t.Helper()
+		var b any
+		if body != nil {
+			b = body
+		}
+		r := s.must(want, s.do(s.admin, method, path, b))
+		files[name] = record(method, path, body, r)
+		return r
+	}
+	list := call("plugins/plugins.json", "GET", "/api/plugins", nil, 200)
+	if dig(list.Body, "plugins", 0, "key") != "forms" || dig(list.Body, "available", 0, "key") != "visits" {
+		t.Fatalf("plugins: %s", list.Raw)
+	}
+	call("plugins/plugin-forms.json", "GET", "/api/plugins/forms", nil, 200)
+	call("plugins/plugin-not-found.json", "GET", "/api/plugins/nope", nil, 404)
+	call("plugins/plugin-forms-admin.json", "GET", "/api/plugins/forms/admin", nil, 200)
+	call("plugins/plugin-menus.json", "GET", "/api/plugin_menus", nil, 200)
+	installed := call("plugins/plugin-install-201.json", "POST", "/api/plugins", map[string]any{"plugin": map[string]any{"key": "visits"}}, 201)
+	if dig(installed.Body, "plugin", "enabled") != false {
+		t.Fatalf("installed: %s", installed.Raw)
+	}
+	call("plugins/plugin-install-404.json", "POST", "/api/plugins", map[string]any{"plugin": map[string]any{"key": "nope"}}, 404)
+	call("plugins/plugin-install-400.json", "POST", "/api/plugins", map[string]any{"plugin": map[string]any{}}, 400)
+	// Granting more than it asks for grants what it asks for.
+	on := call("plugins/plugin-configure.json", "PATCH", "/api/plugins/visits", map[string]any{"plugin": map[string]any{
+		"granted": map[string]any{"content:read": true, "storage": true, "mail": true, "http": []any{"evil.example"}}, "enabled": true}}, 200)
+	if dig(on.Body, "plugin", "enabled") != true || dig(on.Body, "plugin", "granted", "mail") != false {
+		t.Fatalf("configured: %s", on.Raw)
+	}
+	call("plugins/plugin-remove-204.json", "DELETE", "/api/plugins/visits?purge_data=1", nil, 204)
+	return files
 }
 
 func (x exchange) mustJSON(t *testing.T) []byte {

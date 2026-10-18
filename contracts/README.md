@@ -9,6 +9,7 @@ neither side can drift from the other without a test failing.
 | --- | --- |
 | `delivery/*.json` | Bodies of `/api/v1` answers: `schema`, `site`, `content-full`, `content-delta` (`?since=` a cursor), `pages`, `page-home`, `page-about`, `entries-posts`, `entries-projects`, `globals`, `global-nav`, `sitemap`, `robots`, `redirects`, `site-health`. |
 | `forms/*.json` | The Forms plugin's public routes: `form-list`, `form-definition`, and submit answers `form-submit-200`, `form-submit-422` (every kind of invalid answer) and `form-submit-410` (a closed form). |
+| `plugins/*.json` | The plugins API (`/api/plugins`, `/api/plugin_menus`), as an administrator calls it: `plugins` (installed and `available`), `plugin-forms`, `plugin-forms-admin` (its screens), `plugin-menus`, `plugin-install-201` (an available plugin installed, off and granted nothing), `plugin-configure` (granting more than asked grants what was asked), `plugin-remove-204` (no body: the file is `null`), and the errors `plugin-not-found`, `plugin-install-404` (not in this build) and `plugin-install-400`. The sites built on the CMS don't call these; the admin, the CLI and agents do. |
 | `webhooks/<event>.json` | One delivery's body for each event the seeded site sends, `schema.changed` included. |
 | `index.json` | For each file above: the request that produced it (method, path, body), the status, and the headers that are part of the contract (`Content-Type`, `Cache-Tag`, `Cache-Control`, `Location`, `X-CMS-Schema-Digest`). |
 | `webhook_contract.json` | What a webhook receiver can rely on: the envelope, the signature, the events and each payload's keys. |
@@ -20,7 +21,9 @@ seeds a small site (the starter block types, a collection with most field
 types and one with blocks, live and draft pages and entries, a synced
 pattern, an asset, a global, redirects, and two forms with every field type
 — plus keys left over from older data, which mustn't be delivered), makes
-each request and compares the answer with its file.
+each request and compares the answer with its file. Its build has the
+example plugin (`plugins/visits`) beside Forms, so the plugins API has one
+to show as available and to install.
 
 What changes from run to run is normalized so the files are stable:
 timestamps (`published_at`, `updated_at`, `created_at`, `lastmod`,

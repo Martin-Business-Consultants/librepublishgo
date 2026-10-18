@@ -1,4 +1,7 @@
-package main
+// Package forms is the Forms plugin, the first default plugin: forms built
+// visually in the admin, their submissions kept, and each one emailed to
+// the site and a confirmation to the visitor. See docs/forms.md.
+package forms
 
 import (
 	"bytes"
@@ -11,9 +14,11 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-// A form, as stored under "form:<slug>" and as the admin edits it: its
+// Form is a form, as stored under "form:<slug>" and as the admin edits it: its
 // fields (from the builder), who's emailed, what happens after, and how
 // spam is kept out.
 type Form struct {
@@ -111,7 +116,7 @@ var (
 	fieldTypes = func() map[string]bool {
 		types := map[string]bool{}
 		for _, p := range palette {
-			types[p["type"].(string)] = true
+			types[p["type"].(string)] = true //nolint:forcetypeassert,errcheck // the palette is ours, each type a string
 		}
 		return types
 	}()
@@ -140,9 +145,9 @@ const (
 	defaultClientMessage = "<p>Hi {{ name }},</p><p>Thanks for getting in touch. We've received your message and will get back to you soon.</p><p>Here's a copy of what you sent:</p><p>{{ all_fields }}</p><p>{{ site_name }}</p>"
 )
 
-func loadForm(slug string) (Form, bool) {
+func (c *call) loadForm(slug string) (Form, bool) {
 	var f Form
-	ok := kvGetJSON("form:"+slug, &f)
+	ok := c.kvGetJSON("form:"+slug, &f)
 	// Forms saved before the captcha choice used Turnstile when keyed.
 	if f.Captcha == "" && f.TurnstileSecret != "" {
 		f.Captcha = "turnstile"
@@ -150,17 +155,17 @@ func loadForm(slug string) (Form, bool) {
 	return f, ok
 }
 
-func formStats(slug string) stats {
+func (c *call) formStats(slug string) stats {
 	var s stats
-	kvGetJSON("stat:"+slug, &s)
+	c.kvGetJSON("stat:"+slug, &s)
 	return s
 }
 
-func allForms() []Form {
+func (c *call) allForms() []Form {
 	out := []Form{}
-	for _, k := range kvAll("form:") {
+	for _, k := range c.kvAll("form:") {
 		var f Form
-		if kvGetJSON(k, &f) {
+		if c.kvGetJSON(k, &f) {
 			out = append(out, f)
 		}
 	}
@@ -178,7 +183,7 @@ func asHTML(msg, fallback string) string {
 		return msg
 	}
 	var b strings.Builder
-	for _, para := range strings.Split(strings.ReplaceAll(msg, "\r\n", "\n"), "\n\n") {
+	for para := range strings.SplitSeq(strings.ReplaceAll(msg, "\r\n", "\n"), "\n\n") {
 		if para = strings.TrimSpace(para); para != "" {
 			b.WriteString("<p>" + strings.ReplaceAll(html.EscapeString(para), "\n", "<br>") + "</p>")
 		}
@@ -198,16 +203,16 @@ func mask(secret string) string {
 
 // forAdmin is a form as the admin edits it: the secret masked, and how the
 // site uses it.
-func forAdmin(f Form) map[string]any {
+func (c *call) forAdmin(f Form) map[string]any {
 	b, _ := json.Marshal(f)
 	var m map[string]any
-	json.Unmarshal(b, &m)
+	_ = json.Unmarshal(b, &m) // a Form, just marshalled
 	m["turnstile_secret"] = mask(f.TurnstileSecret)
 	m["recaptcha_secret"] = mask(f.RecaptchaSecret)
 	m["admin_message"] = asHTML(f.AdminMessage, defaultAdminMessage)
 	m["client_message"] = asHTML(f.ClientMessage, defaultClientMessage)
 	if f.Slug != "" {
-		s := siteInfo()
+		s := c.siteInfo()
 		base := strings.TrimRight(s.CMSURL, "/") + "/api/x/forms"
 		m["embed"] = []map[string]string{
 			{"label": "Definition (GET)", "value": base + "/definition?form=" + f.Slug, "copy": "true"},
@@ -220,44 +225,41 @@ func forAdmin(f Form) map[string]any {
 
 // ---- admin routes ---------------------------------------------------------
 
-//go:wasmexport list_forms
-func listForms() int32 {
+func (c *call) listForms() *plugin.Response {
 	out := []map[string]any{}
-	for _, f := range allForms() {
+	for _, f := range c.allForms() {
 		count := 0
 		for _, fl := range f.Fields {
 			if !fl.layout() {
 				count++
 			}
 		}
-		st := formStats(f.Slug)
+		st := c.formStats(f.Slug)
 		out = append(out, map[string]any{"slug": f.Slug, "name": f.Name, "status": f.Status, "field_count": count,
 			"submissions": st.Total - st.Spam, "new": st.New, "updated_at": f.UpdatedAt})
 	}
 	return reply(200, map[string]any{"forms": out})
 }
 
-//go:wasmexport show_form
-func showForm() int32 {
-	req := input()
+func (c *call) showForm() *plugin.Response {
+	req := c.req
 	id := req.q("id")
 	if id == "" {
-		return reply(200, map[string]any{"form": forAdmin(newForm())})
+		return reply(200, map[string]any{"form": c.forAdmin(newForm())})
 	}
-	f, ok := loadForm(id)
+	f, ok := c.loadForm(id)
 	if !ok {
 		return notFound("No form " + id + ".")
 	}
-	return reply(200, map[string]any{"form": forAdmin(f)})
+	return reply(200, map[string]any{"form": c.forAdmin(f)})
 }
 
-//go:wasmexport save_form
-func saveForm() int32 {
-	req := input()
+func (c *call) saveForm() *plugin.Response {
+	req := c.req
 	var body struct {
 		Form Form `json:"form"`
 	}
-	if err := json.Unmarshal([]byte(req.Body), &body); err != nil {
+	if err := json.Unmarshal(req.Body, &body); err != nil {
 		return reply(400, map[string]string{"error": "bad_request", "message": "Send {\"form\": {…}}."})
 	}
 	f := body.Form
@@ -265,7 +267,7 @@ func saveForm() int32 {
 	var old Form
 	existing := false
 	if id != "" {
-		if old, existing = loadForm(id); !existing {
+		if old, existing = c.loadForm(id); !existing {
 			return notFound("No form " + id + ".")
 		}
 	}
@@ -287,7 +289,7 @@ func saveForm() int32 {
 		return invalid(errs)
 	}
 	if f.Slug != id {
-		if _, taken := loadForm(f.Slug); taken {
+		if _, taken := c.loadForm(f.Slug); taken {
 			return invalid(map[string][]string{"slug": {"is already used by another form"}})
 		}
 	}
@@ -296,16 +298,16 @@ func saveForm() int32 {
 		f.CreatedAt = now()
 	}
 	f.UpdatedAt = now()
-	if e := kvSetJSON("form:"+f.Slug, f); e != "" {
+	if e := c.kvSetJSON("form:"+f.Slug, f); e != "" {
 		return reply(500, map[string]string{"error": "storage", "message": e})
 	}
 	if existing && f.Slug != id {
-		renameForm(id, f.Slug)
+		c.renameForm(id, f.Slug)
 	}
-	return reply(200, map[string]any{"form": forAdmin(f), "redirect": map[string]any{"screen": "form", "params": map[string]string{"id": f.Slug}}})
+	return reply(200, map[string]any{"form": c.forAdmin(f), "redirect": map[string]any{"screen": "form", "params": map[string]string{"id": f.Slug}}})
 }
 
-func validateForm(f *Form) map[string][]string {
+func validateForm(f *Form) map[string][]string { //nolint:gocyclo // one check after another, each simple
 	errs := map[string][]string{}
 	add := func(k, m string) { errs[k] = append(errs[k], m) }
 	if f.Name == "" {
@@ -442,29 +444,28 @@ func slugify(s string) string {
 }
 
 // renameForm moves a form's submissions and counts to its new slug.
-func renameForm(from, to string) {
-	kvDelete("form:" + from)
-	for _, k := range kvAll("sub:" + from + ":") {
-		if v, ok := kvGet(k); ok {
+func (c *call) renameForm(from, to string) {
+	c.kvDelete("form:" + from)
+	for _, k := range c.kvAll("sub:" + from + ":") {
+		if v, ok := c.kvGet(k); ok {
 			var s Submission
 			if json.Unmarshal([]byte(v), &s) == nil {
 				s.Form = to
-				kvSetJSON("sub:"+to+":"+strings.TrimPrefix(k, "sub:"+from+":"), s)
-				kvSet("all:"+s.ID, to)
+				c.kvSetJSON("sub:"+to+":"+strings.TrimPrefix(k, "sub:"+from+":"), s)
+				c.kvSet("all:"+s.ID, to)
 			}
 		}
-		kvDelete(k)
+		c.kvDelete(k)
 	}
-	if v, ok := kvGet("stat:" + from); ok {
-		kvSet("stat:"+to, v)
-		kvDelete("stat:" + from)
+	if v, ok := c.kvGet("stat:" + from); ok {
+		c.kvSet("stat:"+to, v)
+		c.kvDelete("stat:" + from)
 	}
 }
 
-//go:wasmexport duplicate_form
-func duplicateForm() int32 {
-	req := input()
-	f, ok := loadForm(req.q("id"))
+func (c *call) duplicateForm() *plugin.Response {
+	req := c.req
+	f, ok := c.loadForm(req.q("id"))
 	if !ok {
 		return notFound("No form " + req.q("id") + ".")
 	}
@@ -472,29 +473,28 @@ func duplicateForm() int32 {
 	base := f.Slug + "-copy"
 	f.Slug = base
 	for i := 2; ; i++ {
-		if _, taken := loadForm(f.Slug); !taken {
+		if _, taken := c.loadForm(f.Slug); !taken {
 			break
 		}
 		f.Slug = fmt.Sprintf("%s-%d", base, i)
 	}
 	f.CreatedAt, f.UpdatedAt = now(), now()
-	kvSetJSON("form:"+f.Slug, f)
-	return reply(200, map[string]any{"ok": true, "message": "Duplicated as " + f.Name + ".", "form": forAdmin(f)})
+	c.kvSetJSON("form:"+f.Slug, f)
+	return reply(200, map[string]any{"ok": true, "message": "Duplicated as " + f.Name + ".", "form": c.forAdmin(f)})
 }
 
-//go:wasmexport delete_form
-func deleteForm() int32 {
-	req := input()
+func (c *call) deleteForm() *plugin.Response {
+	req := c.req
 	slug := req.q("id")
-	if _, ok := loadForm(slug); !ok {
+	if _, ok := c.loadForm(slug); !ok {
 		return notFound("No form " + slug + ".")
 	}
-	for _, k := range kvAll("sub:" + slug + ":") {
-		kvDelete("all:" + strings.TrimPrefix(k, "sub:"+slug+":"))
-		kvDelete(k)
+	for _, k := range c.kvAll("sub:" + slug + ":") {
+		c.kvDelete("all:" + strings.TrimPrefix(k, "sub:"+slug+":"))
+		c.kvDelete(k)
 	}
-	kvDelete("stat:" + slug)
-	kvDelete("form:" + slug)
+	c.kvDelete("stat:" + slug)
+	c.kvDelete("form:" + slug)
 	return reply(200, map[string]any{"ok": true, "message": "Deleted."})
 }
 
@@ -511,7 +511,7 @@ type publishedField struct {
 // rules, the labels, where to post, the spam checks it should send, and a
 // digest of all of it ("sha256:<hex>" of the rest in canonical JSON), so a
 // site can tell the form it was built against from the one it's given.
-func published(f Form, s site) map[string]any {
+func published(f Form, s plugin.Site) map[string]any {
 	fields := []publishedField{}
 	for _, fl := range f.Fields {
 		fl.ID = ""
@@ -529,25 +529,21 @@ func published(f Form, s site) map[string]any {
 }
 
 // definition answers one form's published definition.
-//
-//go:wasmexport definition
-func definition() int32 {
-	req := input()
-	f, ok := loadForm(req.q("form"))
+func (c *call) definition() *plugin.Response {
+	req := c.req
+	f, ok := c.loadForm(req.q("form"))
 	if !ok {
 		return notFound("No form " + req.q("form") + ".")
 	}
-	return replyPublic(map[string]any{"form": published(f, siteInfo())})
+	return replyPublic(map[string]any{"form": published(f, c.siteInfo())})
 }
 
 // listPublic is every form a site can draw: its slug, name, whether it's
 // taking submissions, and its definition's digest.
-//
-//go:wasmexport list_public
-func listPublic() int32 {
-	s := siteInfo()
+func (c *call) listPublic() *plugin.Response {
+	s := c.siteInfo()
 	out := []map[string]any{}
-	for _, f := range allForms() {
+	for _, f := range c.allForms() {
 		p := published(f, s)
 		out = append(out, map[string]any{"slug": f.Slug, "name": f.Name, "open": p["open"], "digest": p["digest"]})
 	}
@@ -555,7 +551,7 @@ func listPublic() int32 {
 }
 
 // replyPublic answers a site's read: JSON a cache may keep a minute.
-func replyPublic(v any) int32 {
+func replyPublic(v any) *plugin.Response {
 	return replyRaw(200, map[string]string{"Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=60"}, mustJSON(v))
 }
 
@@ -584,7 +580,7 @@ func canonicalJSON(v any) []byte {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var generic any
-	dec.Decode(&generic)
+	_ = dec.Decode(&generic) // v, just marshalled
 	out, _ := json.Marshal(generic)
 	return out
 }

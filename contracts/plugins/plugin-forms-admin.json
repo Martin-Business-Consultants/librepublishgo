@@ -1,0 +1,805 @@
+{
+  "plugin": {
+    "key": "forms",
+    "menu": {
+      "badge": "/submissions?count=new",
+      "group": "Content",
+      "icon": "form",
+      "label": "Forms"
+    },
+    "name": "Forms",
+    "screens": [
+      {
+        "actions": [
+          {
+            "icon": "add",
+            "label": "New form",
+            "primary": true,
+            "screen": "form"
+          }
+        ],
+        "id": "forms",
+        "menu": "All forms",
+        "source": "/forms",
+        "table": {
+          "columns": [
+            {
+              "key": "name",
+              "label": "Name",
+              "link": {
+                "params": {
+                  "id": "slug"
+                },
+                "screen": "form"
+              },
+              "sub": "slug"
+            },
+            {
+              "key": "field_count",
+              "label": "Fields",
+              "num": true
+            },
+            {
+              "key": "submissions",
+              "label": "Submissions",
+              "link": {
+                "params": {
+                  "form": "slug"
+                },
+                "screen": "submissions"
+              },
+              "num": true
+            },
+            {
+              "badge": true,
+              "key": "status",
+              "label": "Status"
+            },
+            {
+              "key": "updated_at",
+              "label": "Updated",
+              "time": true
+            }
+          ],
+          "empty": {
+            "text": "Build a contact form, a quote request or a sign-up: drag fields in, choose who's emailed, and the site posts to it.",
+            "title": "No forms yet"
+          },
+          "key": "slug",
+          "row_actions": [
+            {
+              "label": "Edit",
+              "params": {
+                "id": "slug"
+              },
+              "screen": "form"
+            },
+            {
+              "label": "Submissions",
+              "params": {
+                "form": "slug"
+              },
+              "screen": "submissions"
+            },
+            {
+              "label": "Duplicate",
+              "params": {
+                "id": "slug"
+              },
+              "post": "/form/duplicate"
+            },
+            {
+              "confirm": "Delete this form and all of its submissions? This can't be undone.",
+              "danger": true,
+              "label": "Delete",
+              "params": {
+                "id": "slug"
+              },
+              "post": "/form/delete"
+            }
+          ],
+          "rows": "forms"
+        },
+        "title": "Forms"
+      },
+      {
+        "form": {
+          "key": "slug",
+          "record": "form",
+          "save": "/form",
+          "tabs": [
+            {
+              "id": "general",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "label": "Name",
+                      "name": "name",
+                      "required": true,
+                      "type": "string"
+                    },
+                    {
+                      "help": "How the site names it: /api/x/forms/submit?form=<slug>. Blank: made from the name.",
+                      "label": "Slug",
+                      "name": "slug",
+                      "type": "string"
+                    },
+                    {
+                      "label": "Status",
+                      "name": "status",
+                      "options": [
+                        {
+                          "label": "Accepting submissions",
+                          "value": "active"
+                        },
+                        {
+                          "label": "Closed",
+                          "value": "closed"
+                        }
+                      ],
+                      "type": "select"
+                    },
+                    {
+                      "help": "Off: only emailed.",
+                      "label": "Keep submissions here",
+                      "name": "store_submissions",
+                      "type": "boolean"
+                    }
+                  ],
+                  "title": "Form"
+                },
+                {
+                  "readonly": "embed",
+                  "title": "On the site"
+                }
+              ],
+              "title": "General"
+            },
+            {
+              "id": "editor",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "name": "fields",
+                      "palette": [
+                        {
+                          "icon": "text",
+                          "input": "text",
+                          "label": "Text",
+                          "props": [
+                            "placeholder",
+                            "default",
+                            "max_length"
+                          ],
+                          "type": "text"
+                        },
+                        {
+                          "icon": "email",
+                          "input": "email",
+                          "label": "Email",
+                          "props": [
+                            "placeholder"
+                          ],
+                          "type": "email"
+                        },
+                        {
+                          "icon": "phone",
+                          "input": "tel",
+                          "label": "Phone",
+                          "props": [
+                            "placeholder"
+                          ],
+                          "type": "tel"
+                        },
+                        {
+                          "icon": "paragraph",
+                          "input": "textarea",
+                          "label": "Paragraph",
+                          "props": [
+                            "placeholder",
+                            "rows",
+                            "max_length"
+                          ],
+                          "type": "textarea"
+                        },
+                        {
+                          "icon": "hash",
+                          "input": "number",
+                          "label": "Number",
+                          "props": [
+                            "placeholder",
+                            "min",
+                            "max"
+                          ],
+                          "type": "number"
+                        },
+                        {
+                          "icon": "dropdown",
+                          "input": "select",
+                          "label": "Dropdown",
+                          "props": [
+                            "options",
+                            "placeholder",
+                            "default"
+                          ],
+                          "type": "select"
+                        },
+                        {
+                          "icon": "radio",
+                          "input": "radio",
+                          "label": "Choice",
+                          "props": [
+                            "options",
+                            "default"
+                          ],
+                          "type": "radio"
+                        },
+                        {
+                          "icon": "checkboxes",
+                          "input": "checkboxes",
+                          "label": "Checkboxes",
+                          "props": [
+                            "options"
+                          ],
+                          "type": "checkboxes"
+                        },
+                        {
+                          "icon": "check-square",
+                          "input": "checkbox",
+                          "label": "Consent",
+                          "props": [
+                            "text"
+                          ],
+                          "type": "checkbox"
+                        },
+                        {
+                          "icon": "calendar",
+                          "input": "date",
+                          "label": "Date",
+                          "props": [],
+                          "type": "date"
+                        },
+                        {
+                          "icon": "link",
+                          "input": "url",
+                          "label": "Website",
+                          "props": [
+                            "placeholder"
+                          ],
+                          "type": "url"
+                        },
+                        {
+                          "icon": "upload",
+                          "input": "file",
+                          "label": "File upload",
+                          "props": [
+                            "accept",
+                            "max_mb"
+                          ],
+                          "type": "file"
+                        },
+                        {
+                          "icon": "eye-off",
+                          "input": "hidden",
+                          "label": "Hidden",
+                          "props": [
+                            "default"
+                          ],
+                          "type": "hidden"
+                        },
+                        {
+                          "icon": "heading",
+                          "input": "heading",
+                          "label": "Heading",
+                          "layout": true,
+                          "props": [
+                            "text"
+                          ],
+                          "type": "heading"
+                        }
+                      ],
+                      "type": "form_builder"
+                    }
+                  ]
+                }
+              ],
+              "title": "Editor"
+            },
+            {
+              "id": "admin",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "label": "Email each submission",
+                      "name": "admin_enabled",
+                      "type": "boolean"
+                    },
+                    {
+                      "help": "Addresses that get each submission. Blank: the site's contact email (Settings › General), else the reply-to or from address in Settings › Email.",
+                      "label": "Send to",
+                      "name": "admin_to",
+                      "type": "string_list"
+                    },
+                    {
+                      "label": "Cc",
+                      "name": "admin_cc",
+                      "type": "string_list"
+                    },
+                    {
+                      "label": "Bcc",
+                      "name": "admin_bcc",
+                      "type": "string_list"
+                    },
+                    {
+                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}.",
+                      "label": "Subject",
+                      "name": "admin_subject",
+                      "type": "string"
+                    },
+                    {
+                      "label": "Message",
+                      "merge_tags": {
+                        "builder": "fields",
+                        "extra": [
+                          {
+                            "hint": "Every answer, as a table",
+                            "label": "All answers",
+                            "name": "all_fields"
+                          },
+                          {
+                            "label": "Form name",
+                            "name": "form_name"
+                          },
+                          {
+                            "label": "Site name",
+                            "name": "site_name"
+                          },
+                          {
+                            "label": "Date received",
+                            "name": "date"
+                          },
+                          {
+                            "label": "Submission id",
+                            "name": "submission_id"
+                          }
+                        ]
+                      },
+                      "name": "admin_message",
+                      "type": "rich_text"
+                    },
+                    {
+                      "help": "Replying goes to the address the visitor typed in this field.",
+                      "label": "Reply to",
+                      "name": "admin_reply_to_field",
+                      "options_from": {
+                        "builder": "fields",
+                        "types": [
+                          "email"
+                        ]
+                      },
+                      "type": "select"
+                    }
+                  ],
+                  "title": "Email each submission to you"
+                },
+                {
+                  "fields": [
+                    {
+                      "help": "Blank: the default in Settings › Email.",
+                      "label": "From name",
+                      "name": "admin_from_name",
+                      "type": "string"
+                    },
+                    {
+                      "help": "Blank: the default in Settings › Email. Use an address your mail server may send as.",
+                      "label": "From address",
+                      "name": "admin_from_email",
+                      "type": "string"
+                    }
+                  ],
+                  "title": "Sent from"
+                }
+              ],
+              "title": "Admin Confirmation"
+            },
+            {
+              "id": "client",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "label": "Send a confirmation",
+                      "name": "client_enabled",
+                      "type": "boolean"
+                    },
+                    {
+                      "label": "Send to the address in",
+                      "name": "client_to_field",
+                      "options_from": {
+                        "builder": "fields",
+                        "types": [
+                          "email"
+                        ]
+                      },
+                      "type": "select"
+                    },
+                    {
+                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}.",
+                      "label": "Subject",
+                      "name": "client_subject",
+                      "type": "string"
+                    },
+                    {
+                      "label": "Message",
+                      "merge_tags": {
+                        "builder": "fields",
+                        "extra": [
+                          {
+                            "hint": "Every answer, as a table",
+                            "label": "All answers",
+                            "name": "all_fields"
+                          },
+                          {
+                            "label": "Form name",
+                            "name": "form_name"
+                          },
+                          {
+                            "label": "Site name",
+                            "name": "site_name"
+                          },
+                          {
+                            "label": "Date received",
+                            "name": "date"
+                          },
+                          {
+                            "label": "Submission id",
+                            "name": "submission_id"
+                          }
+                        ]
+                      },
+                      "name": "client_message",
+                      "type": "rich_text"
+                    }
+                  ],
+                  "title": "Email the visitor a confirmation"
+                },
+                {
+                  "fields": [
+                    {
+                      "help": "Blank: the default in Settings › Email.",
+                      "label": "From name",
+                      "name": "client_from_name",
+                      "type": "string"
+                    },
+                    {
+                      "help": "Blank: the default in Settings › Email.",
+                      "label": "From address",
+                      "name": "client_from_email",
+                      "type": "string"
+                    },
+                    {
+                      "help": "Where the visitor's reply goes. Blank: the from address.",
+                      "label": "Reply-to address",
+                      "name": "client_reply_to",
+                      "type": "string"
+                    }
+                  ],
+                  "title": "Sent from"
+                }
+              ],
+              "title": "User Confirmation"
+            },
+            {
+              "id": "spam",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "help": "A hidden _hp field bots fill in and people don't.",
+                      "label": "Honeypot field",
+                      "name": "honeypot",
+                      "type": "boolean"
+                    },
+                    {
+                      "help": "Submissions sent sooner after the page set _ts are spam. 0: off.",
+                      "label": "Slower than (seconds)",
+                      "name": "min_seconds",
+                      "type": "integer"
+                    }
+                  ],
+                  "title": "Spam protection"
+                },
+                {
+                  "fields": [
+                    {
+                      "help": "The site shows the provider's widget and every submission must pass it.",
+                      "label": "Provider",
+                      "name": "captcha",
+                      "options": [
+                        {
+                          "label": "None",
+                          "value": "none"
+                        },
+                        {
+                          "label": "Cloudflare Turnstile",
+                          "value": "turnstile"
+                        },
+                        {
+                          "label": "Google reCAPTCHA",
+                          "value": "recaptcha"
+                        }
+                      ],
+                      "type": "select"
+                    },
+                    {
+                      "help": "From the Cloudflare dashboard › Turnstile.",
+                      "label": "Site key",
+                      "name": "turnstile_site_key",
+                      "show_if": {
+                        "captcha": "turnstile"
+                      },
+                      "type": "string"
+                    },
+                    {
+                      "label": "Secret key",
+                      "name": "turnstile_secret",
+                      "show_if": {
+                        "captcha": "turnstile"
+                      },
+                      "type": "password"
+                    },
+                    {
+                      "help": "From the reCAPTCHA admin console (v2 or v3).",
+                      "label": "Site key",
+                      "name": "recaptcha_site_key",
+                      "show_if": {
+                        "captcha": "recaptcha"
+                      },
+                      "type": "string"
+                    },
+                    {
+                      "label": "Secret key",
+                      "name": "recaptcha_secret",
+                      "show_if": {
+                        "captcha": "recaptcha"
+                      },
+                      "type": "password"
+                    },
+                    {
+                      "help": "0 to 1; submissions scoring lower are refused. Blank: any that pass (v2).",
+                      "label": "Lowest score (v3)",
+                      "name": "recaptcha_min_score",
+                      "show_if": {
+                        "captcha": "recaptcha"
+                      },
+                      "type": "number"
+                    }
+                  ],
+                  "title": "Captcha"
+                }
+              ],
+              "title": "Spam"
+            },
+            {
+              "id": "after",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "label": "Button label",
+                      "name": "submit_label",
+                      "type": "string"
+                    },
+                    {
+                      "label": "Thank-you message",
+                      "name": "success_message",
+                      "type": "text"
+                    },
+                    {
+                      "help": "A page on the site (/thanks) or an address. Blank: show the message.",
+                      "label": "Or send them to",
+                      "name": "redirect_url",
+                      "type": "string"
+                    }
+                  ],
+                  "title": "After submitting"
+                }
+              ],
+              "title": "After Submission"
+            }
+          ]
+        },
+        "id": "form",
+        "new_title": "New form",
+        "parent": "forms",
+        "source": "/form",
+        "title": "Form",
+        "title_key": "name"
+      },
+      {
+        "actions": [
+          {
+            "download": "/submissions.csv",
+            "icon": "download",
+            "keep": [
+              "form",
+              "status"
+            ],
+            "label": "Export CSV"
+          }
+        ],
+        "id": "submissions",
+        "menu": "Submissions",
+        "source": "/submissions",
+        "table": {
+          "columns": [
+            {
+              "key": "summary",
+              "label": "Submission",
+              "link": {
+                "params": {
+                  "id": "id"
+                },
+                "screen": "submission"
+              },
+              "sub": "excerpt"
+            },
+            {
+              "key": "form_name",
+              "label": "Form"
+            },
+            {
+              "badge": true,
+              "key": "status",
+              "label": "Status"
+            },
+            {
+              "key": "submitted_at",
+              "label": "Received",
+              "time": true
+            }
+          ],
+          "cursor": {
+            "next": "next",
+            "param": "after"
+          },
+          "empty": {
+            "text": "When someone sends one of your forms, it shows here.",
+            "title": "No submissions"
+          },
+          "filters": [
+            {
+              "label": "Form",
+              "options": "forms",
+              "param": "form"
+            }
+          ],
+          "key": "id",
+          "row_actions": [
+            {
+              "label": "View",
+              "params": {
+                "id": "id"
+              },
+              "screen": "submission"
+            },
+            {
+              "body": {
+                "status": "spam"
+              },
+              "label": "Spam",
+              "params": {
+                "id": "id"
+              },
+              "post": "/submission/status"
+            },
+            {
+              "confirm": "Delete this submission?",
+              "danger": true,
+              "label": "Delete",
+              "params": {
+                "id": "id"
+              },
+              "post": "/submission/delete"
+            }
+          ],
+          "rows": "submissions",
+          "status_links": {
+            "options": "statuses",
+            "param": "status"
+          }
+        },
+        "title": "Submissions"
+      },
+      {
+        "detail": {
+          "actions": [
+            {
+              "body": {
+                "status": "read"
+              },
+              "hide_if": {
+                "status": "read"
+              },
+              "label": "Mark as read",
+              "params": {
+                "id": "id"
+              },
+              "post": "/submission/status"
+            },
+            {
+              "body": {
+                "status": "spam"
+              },
+              "hide_if": {
+                "status": "spam"
+              },
+              "label": "Mark as spam",
+              "params": {
+                "id": "id"
+              },
+              "post": "/submission/status"
+            },
+            {
+              "body": {
+                "status": "read"
+              },
+              "label": "Not spam",
+              "params": {
+                "id": "id"
+              },
+              "post": "/submission/status",
+              "show_if": {
+                "status": "spam"
+              }
+            },
+            {
+              "confirm": "Delete this submission?",
+              "danger": true,
+              "label": "Delete",
+              "params": {
+                "id": "id"
+              },
+              "post": "/submission/delete",
+              "then": "submissions"
+            }
+          ],
+          "main": [
+            {
+              "items": "answers",
+              "title": "Answers"
+            }
+          ],
+          "record": "submission",
+          "side": [
+            {
+              "items": "details",
+              "title": "Details"
+            },
+            {
+              "items": "mail",
+              "title": "Email"
+            }
+          ]
+        },
+        "id": "submission",
+        "parent": "submissions",
+        "source": "/submission",
+        "title": "Submission",
+        "title_key": "summary"
+      }
+    ],
+    "version": "1.1.0",
+    "writes": [
+      "/submit",
+      "/form",
+      "/form/duplicate",
+      "/form/delete",
+      "/submission/status",
+      "/submission/delete"
+    ]
+  }
+}

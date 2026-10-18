@@ -67,6 +67,41 @@ func TestOpenStoreAddsMissingColumns(t *testing.T) {
 	}
 }
 
+// A database from when plugins were WebAssembly loses the modules, and
+// keeps the plugins' records and storage.
+func TestOpenStoreDropsPluginWasm(t *testing.T) {
+	t.Parallel()
+	path := openRaw(t, `CREATE TABLE plugins (
+		id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+		key varchar NOT NULL UNIQUE,
+		name varchar NOT NULL,
+		version varchar NOT NULL,
+		description text,
+		manifest json DEFAULT '{}' NOT NULL,
+		granted json DEFAULT '{}' NOT NULL,
+		enabled boolean DEFAULT 0 NOT NULL,
+		wasm blob NOT NULL,
+		created_at datetime(6) NOT NULL,
+		updated_at datetime(6) NOT NULL
+	);
+	INSERT INTO plugins (key, name, version, wasm, enabled, created_at, updated_at) VALUES ('forms', 'Forms', '1', x'0061736d', 1, '2024-01-01', '2024-01-01');`)
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := t.Context()
+	if ok, err := hasColumn(ctx, db.DB, "plugins", "wasm"); err != nil || ok {
+		t.Fatalf("plugins.wasm is still there (%v)", err)
+	}
+	if n, err := Count(ctx, db.DB, `SELECT count(*) FROM plugins WHERE key = 'forms' AND enabled`); err != nil || n != 1 {
+		t.Fatalf("the plugin's record: %d (%v)", n, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO plugins (key, name, version, created_at, updated_at) VALUES ('visits', 'Visits', '1', '2024-01-01', '2024-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOpenStoreRefusesColumnItCantAdd(t *testing.T) {
 	t.Parallel()
 	// No email, and email is NOT NULL with no default.

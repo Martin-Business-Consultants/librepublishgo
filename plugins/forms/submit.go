@@ -1,4 +1,4 @@
-package main
+package forms
 
 import (
 	"bytes"
@@ -18,7 +18,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/extism/go-pdk"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
 // A Submission is one sending of a form, under "sub:<slug>:<id>"; its id
@@ -54,7 +55,8 @@ type posted struct {
 type postedFile struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
-	Data        string `json:"data"`
+	Data        string `json:"data"` // base64, as JSON posts it
+	raw         []byte // as multipart posts it
 	size        int
 }
 
@@ -63,9 +65,9 @@ func parseBody(req request) (posted, error) {
 	ct := req.header("Content-Type")
 	mt, params, _ := mime.ParseMediaType(ct)
 	switch {
-	case mt == "application/json" || (mt == "" && strings.HasPrefix(strings.TrimSpace(req.Body), "{")):
+	case mt == "application/json" || (mt == "" && strings.HasPrefix(strings.TrimSpace(string(req.Body)), "{")):
 		var raw map[string]any
-		if err := json.Unmarshal([]byte(req.Body), &raw); err != nil {
+		if err := json.Unmarshal(req.Body, &raw); err != nil {
 			return p, fmt.Errorf("the body isn't JSON")
 		}
 		for k, v := range raw {
@@ -77,7 +79,7 @@ func parseBody(req request) (posted, error) {
 			case map[string]any:
 				var f postedFile
 				b, _ := json.Marshal(x)
-				json.Unmarshal(b, &f)
+				_ = json.Unmarshal(b, &f) // anything else isn't a file: Data stays empty
 				if f.Data != "" {
 					f.size = base64.StdEncoding.DecodedLen(len(f.Data))
 					p.files[k] = f
@@ -92,7 +94,7 @@ func parseBody(req request) (posted, error) {
 			}
 		}
 	case mt == "multipart/form-data":
-		r := multipart.NewReader(strings.NewReader(req.Body), params["boundary"])
+		r := multipart.NewReader(bytes.NewReader(req.Body), params["boundary"])
 		for {
 			part, err := r.NextPart()
 			if err == io.EOF {
@@ -105,14 +107,14 @@ func parseBody(req request) (posted, error) {
 			if part.FileName() != "" {
 				if len(data) > 0 {
 					p.files[part.FormName()] = postedFile{Filename: path.Base(part.FileName()), ContentType: part.Header.Get("Content-Type"),
-						Data: base64.StdEncoding.EncodeToString(data), size: len(data)}
+						raw: data, size: len(data)}
 				}
 				continue
 			}
 			p.values[part.FormName()] = append(p.values[part.FormName()], string(data))
 		}
 	default:
-		vals, err := url.ParseQuery(req.Body)
+		vals, err := url.ParseQuery(string(req.Body))
 		if err != nil {
 			return p, fmt.Errorf("the body isn't a form")
 		}
@@ -120,8 +122,8 @@ func parseBody(req request) (posted, error) {
 	}
 	// A field named "x[]" (PHP habit) is "x".
 	for k, v := range p.values {
-		if strings.HasSuffix(k, "[]") {
-			p.values[strings.TrimSuffix(k, "[]")] = append(p.values[strings.TrimSuffix(k, "[]")], v...)
+		if name, ok := strings.CutSuffix(k, "[]"); ok {
+			p.values[name] = append(p.values[name], v...)
 			delete(p.values, k)
 		}
 	}
@@ -143,11 +145,10 @@ func wantsJSON(req request) bool {
 		strings.HasPrefix(req.header("Content-Type"), "application/json") || !strings.Contains(accept, "text/html")
 }
 
-//go:wasmexport submit
-func submit() int32 {
-	req := input()
+func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a submission, in order
+	req := c.req
 	slug := req.q("form")
-	f, ok := loadForm(slug)
+	f, ok := c.loadForm(slug)
 	if !ok {
 		return notFound("No form " + slug + ".")
 	}
@@ -176,12 +177,12 @@ func submit() int32 {
 		var why string
 		switch f.Captcha {
 		case "turnstile":
-			why = verifyCaptcha("https://challenges.cloudflare.com/turnstile/v0/siteverify", f.TurnstileSecret, strOr(p.one("cf-turnstile-response"), p.one("cf_turnstile_response")), req.IP, 0)
+			why = c.verifyCaptcha("https://challenges.cloudflare.com/turnstile/v0/siteverify", f.TurnstileSecret, strOr(p.one("cf-turnstile-response"), p.one("cf_turnstile_response")), req.IP, 0)
 		case "recaptcha":
-			why = verifyCaptcha("https://www.google.com/recaptcha/api/siteverify", f.RecaptchaSecret, strOr(p.one("g-recaptcha-response"), p.one("g_recaptcha_response")), req.IP, f.RecaptchaMinScore)
+			why = c.verifyCaptcha("https://www.google.com/recaptcha/api/siteverify", f.RecaptchaSecret, strOr(p.one("g-recaptcha-response"), p.one("g_recaptcha_response")), req.IP, f.RecaptchaMinScore)
 		}
 		if why != "" {
-			return answer(req, f, p.one("_return"), 422, map[string]any{"error": "invalid", "message": why, "errors": map[string][]string{"captcha": {why}}})
+			return c.answer(req, f, p.one("_return"), 422, map[string]any{"error": "invalid", "message": why, "errors": map[string][]string{"captcha": {why}}})
 		}
 	}
 
@@ -205,7 +206,7 @@ func submit() int32 {
 			if sub.Status == "spam" {
 				continue
 			}
-			u, e := putMedia(pf.Filename, pf.ContentType, pf.Data, "Form uploads/"+f.Slug)
+			u, e := c.putMedia(pf, "Form uploads/"+f.Slug)
 			if e != "" {
 				errs[fl.Name] = append(errs[fl.Name], "couldn't be saved: "+e)
 				continue
@@ -228,47 +229,48 @@ func submit() int32 {
 			errs[fl.Name] = append(errs[fl.Name], msg)
 			continue
 		}
-		if fl.Type == "checkboxes" {
+		switch fl.Type {
+		case "checkboxes":
 			sub.Values[fl.Name] = vals
-		} else if fl.Type == "checkbox" {
+		case "checkbox":
 			sub.Values[fl.Name] = "yes"
-		} else {
+		default:
 			sub.Values[fl.Name] = vals[0]
 		}
 	}
 	if len(errs) > 0 && !quiet {
-		return answer(req, f, p.one("_return"), 422, map[string]any{"error": "invalid", "message": "Some fields need attention.", "errors": errs})
+		return c.answer(req, f, p.one("_return"), 422, map[string]any{"error": "invalid", "message": "Some fields need attention.", "errors": errs})
 	}
 
 	// Kept first, then emailed: a slow mail server can't lose a submission.
 	keep := f.StoreSubmissions || sub.Status == "spam"
 	if keep {
-		if e := kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub); e != "" {
-			return answer(req, f, p.one("_return"), 503, map[string]any{"error": "storage", "message": "The submission couldn't be saved; try again."})
+		if e := c.kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub); e != "" {
+			return c.answer(req, f, p.one("_return"), 503, map[string]any{"error": "storage", "message": "The submission couldn't be saved; try again."})
 		}
-		kvSet("all:"+sub.ID, f.Slug)
-		st := formStats(f.Slug)
+		c.kvSet("all:"+sub.ID, f.Slug)
+		st := c.formStats(f.Slug)
 		st.add(sub.Status, 1)
-		kvSetJSON("stat:"+f.Slug, st)
+		c.kvSetJSON("stat:"+f.Slug, st)
 	}
 	if sub.Status != "spam" {
-		sub.Mail = notify(f, sub)
+		sub.Mail = c.notify(f, sub)
 		if keep {
-			kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub)
+			c.kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub)
 		}
 	}
-	return answer(req, f, p.one("_return"), 200, map[string]any{"ok": true, "message": f.SuccessMessage, "redirect": f.RedirectURL})
+	return c.answer(req, f, p.one("_return"), 200, map[string]any{"ok": true, "message": f.SuccessMessage, "redirect": f.RedirectURL})
 }
 
 // answer replies to a script with JSON, and to a plain HTML form with a
 // redirect: to the thank-you page, or back to the page it came from — the
 // _return it sent when that's on one of the site's origins, else the
 // Referer.
-func answer(req request, f Form, ret string, status int, body map[string]any) int32 {
+func (c *call) answer(req request, f Form, ret string, status int, body map[string]any) *plugin.Response {
 	if wantsJSON(req) {
 		return reply(status, body)
 	}
-	s := siteInfo()
+	s := c.siteInfo()
 	to := req.header("Referer")
 	if back, ok := onSite(ret, s.Origins); ok {
 		to = back
@@ -313,23 +315,29 @@ func onSite(raw string, origins []string) (string, bool) {
 
 // verifyCaptcha checks a token with Turnstile or reCAPTCHA (the same
 // siteverify call); minScore applies to reCAPTCHA v3's score.
-func verifyCaptcha(endpoint, secret, token, ip string, minScore float64) string {
+func (c *call) verifyCaptcha(endpoint, secret, token, ip string, minScore float64) string {
 	if token == "" {
 		return "Complete the captcha."
 	}
 	body := url.Values{"secret": {secret}, "response": {token}, "remoteip": {ip}}.Encode()
-	r := pdk.NewHTTPRequest(pdk.MethodPost, endpoint)
-	r.SetHeader("Content-Type", "application/x-www-form-urlencoded")
-	r.SetBody([]byte(body))
-	res := r.Send()
-	if res.Status() != http.StatusOK {
+	r, err := http.NewRequestWithContext(c.ctx, http.MethodPost, endpoint, strings.NewReader(body))
+	if err != nil {
+		return "The captcha couldn't be checked; try again."
+	}
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := c.api.HTTP().Do(r)
+	if err != nil {
+		return "The captcha couldn't be checked; try again."
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
 		return "The captcha couldn't be checked; try again."
 	}
 	var out struct {
 		Success bool     `json:"success"`
 		Score   *float64 `json:"score"`
 	}
-	json.Unmarshal(res.Body(), &out)
+	_ = json.NewDecoder(res.Body).Decode(&out) // an answer that isn't JSON doesn't pass
 	if !out.Success || (minScore > 0 && out.Score != nil && *out.Score < minScore) {
 		return "The captcha didn't pass; try again."
 	}
@@ -339,11 +347,11 @@ func verifyCaptcha(endpoint, secret, token, ip string, minScore float64) string 
 // ---- email ----------------------------------------------------------------
 
 // notify sends the notification and the confirmation, and says how each went.
-func notify(f Form, s Submission) map[string]string {
+func (c *call) notify(f Form, s Submission) map[string]string {
 	out := map[string]string{}
-	site := siteInfo()
+	site := c.siteInfo()
 	tags := mergeTags(f, s, site)
-	if f.AdminEnabled {
+	if f.AdminEnabled { //nolint:nestif // who to send to, then sending
 		to := f.AdminTo
 		if len(to) == 0 && site.ContactEmail != "" {
 			to = []string{site.ContactEmail}
@@ -352,14 +360,14 @@ func notify(f Form, s Submission) map[string]string {
 			out["admin"] = "not sent: no address to send to"
 		} else {
 			text, html := render(strOr(f.AdminMessage, defaultAdminMessage), f, s, site)
-			m := email{To: to, Cc: f.AdminCc, Bcc: f.AdminBcc, FromName: f.AdminFromName, FromEmail: strings.TrimSpace(f.AdminFromEmail),
+			m := mail.Message{To: to, Cc: f.AdminCc, Bcc: f.AdminBcc, FromName: f.AdminFromName, FromEmail: strings.TrimSpace(f.AdminFromEmail),
 				Subject: fill(strOr(f.AdminSubject, "New {{ form_name }} submission"), tags), Text: text, HTML: html}
 			if f.AdminReplyToField != "" {
 				if v, ok := s.Values[f.AdminReplyToField].(string); ok && emailFormat.MatchString(v) {
 					m.ReplyTo = v
 				}
 			}
-			out["admin"] = result(sendMail(m), len(to)+len(f.AdminCc)+len(f.AdminBcc))
+			out["admin"] = c.result(c.sendMail(m), len(to)+len(f.AdminCc)+len(f.AdminBcc))
 		}
 	}
 	if f.ClientEnabled {
@@ -368,17 +376,17 @@ func notify(f Form, s Submission) map[string]string {
 			out["client"] = "not sent: no email address in " + f.ClientToField
 		} else {
 			text, html := render(strOr(f.ClientMessage, defaultClientMessage), f, s, site)
-			m := email{To: []string{to}, FromName: f.ClientFromName, FromEmail: strings.TrimSpace(f.ClientFromEmail), ReplyTo: strings.TrimSpace(f.ClientReplyTo),
+			m := mail.Message{To: []string{to}, FromName: f.ClientFromName, FromEmail: strings.TrimSpace(f.ClientFromEmail), ReplyTo: strings.TrimSpace(f.ClientReplyTo),
 				Subject: fill(f.ClientSubject, tags), Text: text, HTML: html}
-			out["client"] = result(sendMail(m), 1)
+			out["client"] = c.result(c.sendMail(m), 1)
 		}
 	}
 	return out
 }
 
-func result(err string, n int) string {
+func (c *call) result(err string, n int) string {
 	if err != "" {
-		logf("forms: email failed: " + err)
+		c.logf("forms: email failed: " + err)
 		return "failed: " + err
 	}
 	return fmt.Sprintf("sent to %d", n)
@@ -407,7 +415,7 @@ func display(v any) string {
 	return fmt.Sprint(v)
 }
 
-func mergeTags(f Form, s Submission, site site) map[string]string {
+func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
 	tags := map[string]string{"form_name": f.Name, "site_name": site.Name, "submission_id": s.ID,
 		"date": strings.Replace(s.SubmittedAt, "T", " ", 1)}
 	var all bytes.Buffer
@@ -445,7 +453,7 @@ var (
 // render makes a message's plain text and HTML. A message written in the
 // rich-text editor is HTML; an older plain one is text, sent as text. In
 // HTML the answers are escaped, and {{ all_fields }} is a table.
-func render(tpl string, f Form, s Submission, st site) (text, htmlOut string) {
+func render(tpl string, f Form, s Submission, st plugin.Site) (text, htmlOut string) {
 	plain := mergeTags(f, s, st)
 	if !htmlTag.MatchString(tpl) {
 		return fill(tpl, plain), ""

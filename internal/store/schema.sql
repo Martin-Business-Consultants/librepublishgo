@@ -377,8 +377,8 @@ CREATE TABLE IF NOT EXISTS revisions (
   created_at datetime(6) NOT NULL
 );
 
--- Installed WebAssembly plugins: the module, what it asked for, and what a
--- person granted it.
+-- Installed plugins (Go, compiled into the binary): what each asked for,
+-- and what a person granted it.
 CREATE TABLE IF NOT EXISTS plugins (
   id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
   key varchar NOT NULL UNIQUE,
@@ -388,7 +388,6 @@ CREATE TABLE IF NOT EXISTS plugins (
   manifest json DEFAULT '{}' NOT NULL,
   granted json DEFAULT '{}' NOT NULL,
   enabled boolean DEFAULT 0 NOT NULL,
-  wasm blob NOT NULL,
   created_at datetime(6) NOT NULL,
   updated_at datetime(6) NOT NULL
 );

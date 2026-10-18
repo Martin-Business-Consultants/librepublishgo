@@ -2,7 +2,6 @@ package cms
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,7 +32,11 @@ func (a *App) listPlugins(c *Ctx) error {
 	for _, p := range a.plugins.List() {
 		out = append(out, pluginJSON(p))
 	}
-	return c.JSON(200, O("plugins", out))
+	available := []Obj{}
+	for _, m := range a.plugins.Available() {
+		available = append(available, O("key", m.Key, "name", m.Name, "version", m.Version, "description", m.Description, "requested", m.Permissions))
+	}
+	return c.JSON(200, O("plugins", out, "available", available))
 }
 
 func (a *App) showPlugin(c *Ctx) error {
@@ -115,40 +118,24 @@ func (a *App) pluginMenus(c *Ctx) error {
 	return c.JSON(200, O("menus", out))
 }
 
-// maxPluginWasm is the largest plugin module an install takes.
-const maxPluginWasm = 64 << 20
-
+// installPlugin installs one of the plugins this build has, off until its
+// permissions are granted.
 func (a *App) installPlugin(c *Ctx) error {
 	if err := c.Need("plugins:write"); err != nil {
 		return err
 	}
-	// The module, plus room for a multipart form's boundaries.
-	c.R.Body = http.MaxBytesReader(c.W, c.R.Body, maxPluginWasm+1<<20)
-	tooLarge := func(err error) bool {
-		_, ok := errors.AsType[*http.MaxBytesError](err)
-		return ok
+	var body struct {
+		Plugin struct {
+			Key string `json:"key"`
+		} `json:"plugin"`
 	}
-	var src io.Reader = c.R.Body
-	if strings.HasPrefix(c.R.Header.Get("Content-Type"), "multipart/") {
-		f, _, err := c.R.FormFile("file")
-		if tooLarge(err) {
-			return apierr.TooLarge(maxPluginWasm)
-		} else if err != nil {
-			return apierr.BadRequest("Upload the .wasm file as \"file\".")
-		}
-		defer f.Close()
-		src = f
-	}
-	wasm, err := io.ReadAll(io.LimitReader(src, maxPluginWasm+1))
-	if tooLarge(err) || len(wasm) > maxPluginWasm {
-		return apierr.TooLarge(maxPluginWasm)
-	} else if err != nil {
+	if err := c.Body(&body); err != nil {
 		return err
 	}
-	if len(wasm) < 8 || string(wasm[:4]) != "\x00asm" {
-		return apierr.BadRequest("That isn't a .wasm file.")
+	if body.Plugin.Key == "" {
+		return apierr.BadRequest("Name the plugin to install: {\"plugin\": {\"key\": \"…\"}}.")
 	}
-	p, err := a.plugins.Install(c.R.Context(), c.Actor, wasm)
+	p, err := a.plugins.Install(c.R.Context(), c.Actor, body.Plugin.Key)
 	if err != nil {
 		return err
 	}
@@ -189,9 +176,7 @@ func (a *App) removePlugin(c *Ctx) error {
 	return c.NoContent()
 }
 
-// pluginRoute hands a request to the plugin export its manifest names. The
-// plugin gets {method, path, query, headers, body, actor} and answers
-// {status, headers, body} (or anything else, sent as JSON).
+// pluginRoute hands a request to the plugin handler its manifest names.
 func (a *App) pluginRoute(c *Ctx) error {
 	p := a.plugins.Get(c.Param("key"))
 	if p == nil || !p.Enabled {
@@ -237,40 +222,30 @@ func (a *App) pluginRoute(c *Ctx) error {
 			headers[k] = v
 		}
 	}
-	var actor any
+	req := &plugin.Request{Method: c.R.Method, Path: path, Query: c.R.URL.Query(), Headers: headers, Body: body, IP: c.ip()}
 	if c.Actor != nil {
-		actor = O("name", c.Actor.Name, "type", c.Actor.Type(), "capabilities", a.capabilitiesOf(c.Actor.Role))
+		req.Actor = &plugin.Caller{Name: c.Actor.Name, Type: c.Actor.Type(), Capabilities: a.capabilitiesOf(c.Actor.Role)}
 	}
-	in, _ := json.Marshal(O("method", c.R.Method, "path", path, "query", c.R.URL.Query(), "headers", headers, "body", string(body), "ip", c.ip(), "actor", actor))
-	out, err := a.plugins.Call(c.R.Context(), p.Key, rt.Export, in)
+	res, err := a.plugins.Serve(c.R.Context(), p.Key, rt.Export, req)
 	if err != nil {
 		a.log.Warn("plugin route", "plugin", p.Key, "err", err)
 		return &apierr.Error{Status: 502, Code: "plugin_error", Message: "The plugin failed to answer."}
 	}
-	var resp struct {
-		Status  int               `json:"status"`
-		Headers map[string]string `json:"headers"`
-		Body    *string           `json:"body"`
+	for k, v := range res.Headers {
+		if !strings.EqualFold(k, "Set-Cookie") {
+			c.W.Header().Set(k, v)
+		}
 	}
-	if json.Unmarshal(out, &resp) == nil && resp.Status != 0 {
-		for k, v := range resp.Headers {
-			if !strings.EqualFold(k, "Set-Cookie") {
-				c.W.Header().Set(k, v)
-			}
-		}
-		if c.W.Header().Get("Content-Type") == "" {
-			c.W.Header().Set("Content-Type", "application/json; charset=utf-8")
-		}
-		c.W.Header().Set("Content-Security-Policy", "sandbox")
-		c.W.WriteHeader(resp.Status)
-		if resp.Body != nil {
-			c.W.Write([]byte(*resp.Body))
-		}
-		return nil
+	if c.W.Header().Get("Content-Type") == "" {
+		c.W.Header().Set("Content-Type", "application/json; charset=utf-8")
 	}
-	c.W.Header().Set("Content-Type", "application/json; charset=utf-8")
-	c.W.WriteHeader(http.StatusOK)
-	_, err = c.W.Write(out)
+	c.W.Header().Set("Content-Security-Policy", "sandbox")
+	status := res.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	c.W.WriteHeader(status)
+	_, err = c.W.Write(res.Body)
 	return err
 }
 
@@ -278,5 +253,5 @@ func (a *App) pluginRoute(c *Ctx) error {
 func pluginJSON(p *plugin.Plugin) Obj {
 	return O("id", p.ID, "key", p.Key, "name", p.Name, "version", p.Version, "description", p.Description,
 		"requested", p.Manifest.Permissions, "granted", p.Granted, "enabled", p.Enabled, "hooks", p.Manifest.Hooks,
-		"routes", p.Manifest.Routes, "admin", p.Manifest.Admin, "created_at", p.CreatedAt, "updated_at", p.UpdatedAt)
+		"routes", p.Manifest.Routes, "admin", p.Manifest.Admin, "built_in", p.BuiltIn(), "created_at", p.CreatedAt, "updated_at", p.UpdatedAt)
 }

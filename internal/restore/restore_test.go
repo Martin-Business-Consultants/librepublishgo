@@ -19,11 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tetratelabs/wazero"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/cms"
-	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
@@ -31,11 +29,6 @@ import (
 
 func TestMain(m *testing.M) {
 	secret.PasswordCost = bcrypt.MinCost
-	cache, err := wazero.NewCompilationCacheWithDir(filepath.Join(os.TempDir(), "librepublish-test-wazero"))
-	if err != nil {
-		cache = wazero.NewCompilationCache()
-	}
-	plugin.CompilationCache = cache
 	os.Exit(m.Run())
 }
 

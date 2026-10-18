@@ -1,135 +1,147 @@
-# Plugins: contract v3
+# Plugins: contract v4
 
-A plugin is a WebAssembly module that uses [Extism](https://extism.org)'s
-ABI. It does what it declared, gets only the capabilities a person granted,
-and nothing else. It doesn't depend on the core's language, so the core can
-change underneath it.
+A plugin is a Go package compiled into the binary. It builds a
+`*plugin.Module` (`internal/plugin`): a manifest saying what it is and what
+it needs, the handlers for its routes, and the events it hears. It reaches
+the CMS only through the `*plugin.API` it's handed on each call, which holds
+the capabilities a person granted it and nothing else.
 
-Why not Rails engines: an engine runs with full access to everything, and it
-reaches into internals, so core can never change them. Plugins written by AI
-for site owners who can't review the code make that the biggest risk the CMS
-carries. A WebAssembly module can only call what the host hands it.
+Plugins used to be WebAssembly modules (contract v3). They're Go now: one
+language, one build, no runtime between the CMS and the plugin, and a
+plugin is reviewed and tested like the rest of the code. The trade: a
+plugin is added by building the binary with it, not by uploading a file,
+and the grants are a contract the host keeps, not a sandbox wall. A plugin
+that calls only its `*plugin.API` can do no more than it was granted, but
+Go doesn't stop one that imports `os` or `database/sql`, so review that a
+plugin doesn't.
 
-## The file
+## Adding one
 
-One `.wasm`. Build it with an Extism PDK:
+1. Write a package under `plugins/<key>` with a `Module() *plugin.Module`
+   ([plugins/visits](../plugins/visits/visits.go) is a small example).
+2. Add it to `builtinPlugins` in `internal/cms/plugins.go`.
 
-| Language | PDK | Build |
-| --- | --- | --- |
-| Go | `github.com/extism/go-pdk` | `GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o p.wasm .` |
-| Rust | `extism-pdk` | `cargo build --target wasm32-unknown-unknown --release` |
-| TypeScript/JS | `@extism/js-pdk` | `extism-js plugin.js -i plugin.d.ts -o p.wasm` |
-| Python | `extism-py` | `extism-py plugin.py -o p.wasm` |
+A build with it lists it under Plugins › Available until someone installs
+it. One with `Default: true` is installed, granted what it asks for and
+switched on at first run.
 
-## Exports
+## The module
 
-### `manifest` (required)
-
-It takes no input and outputs JSON:
-
-```json
-{
-  "key": "visits",
-  "name": "Visits",
-  "version": "1.0.0",
-  "description": "Counts the page views a site reports.",
-  "permissions": { "content:read": true, "storage": true, "mail": false, "media:write": false, "http": ["api.example.com"] },
-  "capabilities": [ { "key": "visits:read", "label": "See page views" } ],
-  "hooks": ["page.published"],
-  "routes": [
-    { "method": "POST", "path": "/hit", "export": "hit", "public": true },
-    { "method": "GET", "path": "/stats", "export": "stats", "capability": "visits:read" }
-  ],
-  "admin": { "screens": [ { "id": "stats", "title": "Visits", "source": "/stats",
-    "table": { "rows": "pages", "columns": [ { "key": "path", "label": "Page" }, { "key": "views", "label": "Views" } ] } } ] },
-  "site_config": { "endpoint": "/api/x/visits/hit" }
+```go
+func Module() *plugin.Module {
+	return &plugin.Module{
+		Manifest: plugin.Manifest{
+			Key:         "visits",
+			Name:        "Visits",
+			Version:     "1.0.0",
+			Description: "Counts the page views a site reports.",
+			Permissions: plugin.Grants{ContentRead: true, Storage: true},
+			Capabilities: []plugin.Capability{{Key: "visits:read", Label: "See page views"}},
+			Hooks:       []string{"page.published"},
+			Routes: []plugin.Route{
+				{Method: "POST", Path: "/hit", Export: "hit", Public: true},
+				{Method: "GET", Path: "/stats", Export: "stats", Capability: "visits:read"},
+			},
+			Admin:      adminJSON,                               // json.RawMessage, below
+			SiteConfig: json.RawMessage(`{"endpoint": "/api/x/visits/hit"}`),
+		},
+		Handlers: map[string]plugin.Handler{"hit": hit, "stats": stats},
+		OnEvent:  onEvent,
+	}
 }
 ```
 
-- `key`: lowercase letters, digits and `_`. It is the plugin's namespace
+- `Key`: lowercase letters, digits and `_`. It is the plugin's namespace
   (storage, routes) and stays the same across versions.
-- `permissions`: what it asks for. Hosts are names (`api.example.com`), never
-  `*` or URLs.
-- `site_config`: what `/api/v1/site` publishes under `plugin_config.<key>`
+- `Permissions`: what it asks for. `HTTP` names hosts (`api.example.com`),
+  never `*` or URLs.
+- `SiteConfig`: what `/api/v1/site` publishes under `plugin_config.<key>`
   for the site's build.
-- `capabilities`: what it adds to the role editor, each `<key>:<name>` with
+- `Capabilities`: what it adds to the role editor, each `<key>:<name>` with
   a label. Administrators have them; other roles get them when ticked.
 
-The manifest is read in a sandbox with nothing granted. The plugin is stored
-switched off.
+A module whose manifest doesn't hold up, or whose routes name a handler it
+doesn't have, stops the binary at start: that's a bug in the build.
 
-### `on_event`
+### Routes
 
-Each event the plugin hooks arrives as input: `{"event": "page.published",
-"data": {…}}`, where `data` is the webhook payload. Events are delivered in
-the background, so a slow or failing plugin never holds up a save. The
-events are `page.published|updated|unpublished|deleted`,
-`entry.published|updated|unpublished|deleted` and `global.updated`.
+A route is served at `/api/x/<key><path>`, by the handler its `Export`
+names:
 
-### Route exports
-
-A route is served at `/api/x/<key><path>`. The export gets:
-
-```json
-{ "method": "POST", "path": "/hit", "query": {…}, "headers": {"Content-Type": "…"},
-  "body": "<the request body, up to 1 MB>", "ip": "…",
-  "actor": { "name": "…", "type": "User|ServiceToken", "capabilities": [ … ] } }
+```go
+func hit(ctx context.Context, api *plugin.API, req *plugin.Request) (*plugin.Response, error)
 ```
 
-`actor` is `null` on a public route called by no one signed in. A route
-that isn't `public` needs a caller with its `capability` (one of the
+`req` has `Method`, `Path`, `Query`, `Headers` (Content-Type, Accept,
+User-Agent, Referer, Origin, X-Requested-With), `Body` (up to the route's
+limit), `IP` and `Actor` (`{Name, Type, Capabilities}`, nil on a public
+route called by no one signed in).
+
+A route that isn't `Public` needs a caller with its `Capability` (one of the
 plugin's own, or `plugins:read`/`plugins:write`); without one, a GET needs
 `plugins:read` and anything else `plugins:write`. A route takes a body of up
-to 1 MB unless it sets `max_body` (at most 10 MB). Public routes take 30
+to 1 MB unless it sets `MaxBody` (at most 10 MB). Public routes take 30
 calls a minute from one address, and browsers on the origins in Settings ›
 General may call them (CORS).
 
-It answers `{"status": 200, "headers": {…}, "body": "…"}`. Any other output
-is sent as JSON with a 200. `Set-Cookie` is dropped, and every answer is
-served with `Content-Security-Policy: sandbox`, so a plugin can't run script
-as the CMS's origin.
+It answers a `*plugin.Response` (`plugin.JSON(status, v)` for JSON). An
+error answers 502 and is logged. `Set-Cookie` is dropped, and every answer
+is served with `Content-Security-Policy: sandbox`, so a plugin can't run
+script as the CMS's origin.
+
+### Events
+
+`OnEvent(ctx, api, event, data)` hears each event the manifest hooks, with
+`data` the webhook payload as JSON. Events are delivered in the background,
+so a slow or failing plugin never holds up a save. The events are
+`page.published|updated|unpublished|deleted`,
+`entry.published|updated|unpublished|deleted` and `global.updated`.
+
+Each call's context ends after 10 seconds, and a call that panics answers an
+error instead of taking the server down.
 
 ## The host's capabilities
 
-These are imports from `extism:host/user`. Each one takes a string and
-returns JSON (memory offsets, Extism's convention). One that wasn't granted
-answers `{"error": "lp_kv_set wasn't granted to this plugin"}` instead of
-trapping.
+`*plugin.API`'s methods. One that wasn't granted answers an error (`storage
+wasn't granted to this plugin`) and does nothing.
 
-| Import | Needs | Input | Output |
-| --- | --- | --- | --- |
-| `lp_log` | always | a message | `{"ok": true}` |
-| `lp_site` | always | anything | `{"name", "url", "cms_url", "locale", "contact_email", "origins"}` (`origins`: the site's own, as CORS allows them) |
-| `lp_content` | `content:read` | `{"page": "about"}`, `{"pages": true}`, `{"collection": "posts"}`, `{"collection": "posts", "entry": "hello"}` or `{"global": "nav"}` | live content, shaped as `/api/v1` shapes it |
-| `lp_kv_get` | `storage` | a key | `{"found": bool, "value": "…"}` |
-| `lp_kv_set` | `storage` | `{"key": "…", "value": "…"}` (value ≤ 1 MB, ≤ 100,000 keys) | `{"ok": true}` |
-| `lp_kv_delete` | `storage` | a key | `{"ok": true}` |
-| `lp_kv_list` | `storage` | a key prefix, or `{"prefix", "after", "limit"}`, or `{"prefix", "count": true}` | `{"keys": […], "next": "…"}` (≤ 1000 a page; `next` is the next page's `after`), or `{"count": n}` |
-| `lp_mail` | `mail` | `{"to": […], "cc", "bcc", "subject", "text", "html", "from_name", "from_email", "reply_to"}` | `{"ok": true}`, sent through Settings › Email (from its defaults where blank); ≤ 50 recipients, ≤ 200 messages an hour |
-| `lp_media_put` | `media:write` | `{"filename", "data": "<base64>", "content_type", "folder", "alt"}` (≤ 10 MB) | the asset, as the media API shows it; the folder defaults to `Plugins/<key>` |
-| Extism `http_request` | `http` | the PDK's HTTP call | only to granted hosts, responses ≤ 4 MB |
+| Method | Needs | Does |
+| --- | --- | --- |
+| `Log(msg)` | always | writes to the server log, under the plugin's key |
+| `Site(ctx)` | always | `plugin.Site{Name, URL, CMSURL, Locale, ContactEmail, Origins}` (`Origins`: the site's own, as CORS allows them) |
+| `Content(ctx, q)` | `content:read` | live content, shaped as `/api/v1` shapes it: `ContentQuery{Page: "about"}`, `{Pages: true}`, `{Collection: "posts"}`, `{Collection: "posts", Entry: "hello"}` or `{Global: "nav"}` |
+| `KVGet(ctx, key)` | `storage` | the value, and whether there is one |
+| `KVSet(ctx, key, value)` | `storage` | value ≤ 1 MB, ≤ 100,000 keys |
+| `KVDelete(ctx, key)` | `storage` | |
+| `KVList(ctx, prefix, after, limit)` | `storage` | keys in order, ≤ 1000 a page, and the next page's `after` (`""` at the end) |
+| `KVAll(ctx, prefix)`, `KVCount(ctx, prefix)` | `storage` | every key under a prefix; how many |
+| `Mail(ctx, mail.Message)` | `mail` | sent through Settings › Email (from its defaults where blank); ≤ 50 recipients, ≤ 200 messages an hour |
+| `PutMedia(ctx, plugin.Media)` | `media:write` | a file (≤ 10 MB) into the media library, answered as the media API shows it; the folder defaults to `Plugins/<key>` |
+| `HTTP()` | `http` | an `*http.Client` that reaches only the granted hosts (redirects included) and reads ≤ 4 MB of a response |
 
 Storage is the plugin's own (`plugin_kv`, keyed by its `key`). Other plugins
 can't see it, and it survives upgrades. Removing a plugin keeps its storage
 unless removal is asked to purge it.
 
-Limits: each call gets a fresh instance, 10 seconds, and 64 MB of memory,
-with the real clock and real randomness.
-
 ## Installing, granting, upgrading
 
 ```
-POST   /api/plugins            the .wasm as the body (or multipart "file")   plugins:write
+GET    /api/plugins[/<key>]                                            plugins:read
+POST   /api/plugins            {"plugin": {"key": "visits"}}             plugins:write
 PATCH  /api/plugins/<key>      {"plugin": {"granted": {…}, "enabled": true}}  plugins:write
-DELETE /api/plugins/<key>[?purge_data=1]                                      plugins:write
-GET    /api/plugins[/<key>]                                                   plugins:read
+DELETE /api/plugins/<key>[?purge_data=1]                               plugins:write
 ```
 
-A grant is never wider than what's asked: granting more than the manifest
-requests grants what it requests. Uploading a new version of an installed
-plugin keeps the grants it still asks for. If it asks for more, it stays off
-until someone grants the rest. A plugin that fails to load is left off and
-logged, never fatal, so plugins can't break the site.
+`GET /api/plugins` answers the installed `plugins` and the ones this build
+has that aren't installed, `available`. Installing stores a plugin off,
+granted nothing. A grant is never wider than what's asked: granting more
+than the manifest requests grants what it requests.
+
+A new build whose plugin's manifest changed upgrades it in place at start:
+it keeps the grants it still asks for, and if it asks for more it's off
+until someone grants the rest. A plugin installed by an older build that
+this one doesn't have (a WebAssembly one, say) is kept, off, and shows as
+"Not in this build"; its storage is kept.
 
 ## Admin screens, as data
 
@@ -178,11 +190,11 @@ data can't describe.
 
 ## Default plugins
 
-The binary ships some plugins (`internal/cms/defaults`, built from
-`plugins/<key>` with `make plugins`). On first run each is installed,
-granted what it asks for and switched on. A new binary upgrades it in place,
-on or off as it was. Removing one removes it for good: it isn't put back.
-Today that's **Forms** ([docs/forms.md](forms.md)).
+A module with `Default: true` is installed on first run, granted what it
+asks for and switched on. A new build upgrades it in place, granted what it
+asks for and on or off as it was. Removing one removes it for good: it isn't
+put back (though it can be installed again from Available). Today that's
+**Forms** ([plugins/forms](../plugins/forms), [docs/forms.md](forms.md)).
 
 ## Porting the Rails engines
 
@@ -190,7 +202,7 @@ The engines map onto this contract like this:
 
 - **Forms**: done, as the first default plugin (`plugins/forms`).
 - **Commerce (quotes and invoices)**: a public `POST /quote` route, quotes and
-  invoices in storage, and admin screens. Sending an invoice uses `lp_mail`.
+  invoices in storage, and admin screens. Sending an invoice uses `Mail`.
 - **Leads, AI, Market**: these need `content:read`, storage and `http` to
   their APIs. AI's writes to content need a `content:write` capability that
   goes through the same publish gate as any other writer, so its writes to

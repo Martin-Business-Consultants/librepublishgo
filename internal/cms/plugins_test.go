@@ -1,52 +1,37 @@
 package cms
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/plugins/visits"
 )
 
-// buildVisits compiles the example plugin (plugins/visits) to wasm, once
-// for every test that wants it.
-func buildVisits(t *testing.T) []byte {
+// newSiteWithVisits is a site whose build has the example plugin
+// (plugins/visits), not installed.
+func newSiteWithVisits(t *testing.T) *site {
 	t.Helper()
-	wasm, err := visitsWasm()
-	if err != nil {
-		t.Skipf("couldn't build the example plugin: %v", err)
-	}
-	return wasm
+	return newSiteWith(t, Config{NoDefaultPlugins: true, Plugins: []*plugin.Module{visits.Module()}})
 }
 
-var visitsWasm = sync.OnceValues(func() ([]byte, error) {
-	dir, err := os.MkdirTemp("", "visits-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(dir)
-	out := filepath.Join(dir, "visits.wasm")
-	cmd := exec.CommandContext(context.Background(), "go", "build", "-buildmode=c-shared", "-o", out, ".")
-	cmd.Dir = filepath.Join("..", "..", "plugins", "visits")
-	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
-	if b, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("%w\n%s", err, b)
-	}
-	return os.ReadFile(out)
-})
-
-func TestWasmPlugin(t *testing.T) {
+func TestPlugin(t *testing.T) {
 	t.Parallel()
-	wasm := buildVisits(t)
-	s := newSite(t)
+	s := newSiteWithVisits(t)
 	s.must(201, s.do(s.admin, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "about", "title": "About", "status": "published"}}))
 
-	// Installing reads what it asks for, and leaves it off.
-	s.must(403, s.do(s.agent, "POST", "/api/plugins", wasm, "Content-Type", "application/wasm"))
-	r := s.must(201, s.do(s.admin, "POST", "/api/plugins", wasm, "Content-Type", "application/wasm"))
+	// It's available until it's installed; installing leaves it off.
+	r := s.must(200, s.do(s.admin, "GET", "/api/plugins", nil))
+	if dig(r.Body, "available", 1, "key") != "visits" || len(r.Body["plugins"].([]any)) != 0 {
+		t.Fatalf("list: %s", r.Raw)
+	}
+	install := map[string]any{"plugin": map[string]any{"key": "visits"}}
+	s.must(403, s.do(s.agent, "POST", "/api/plugins", install))
+	s.must(404, s.do(s.admin, "POST", "/api/plugins", map[string]any{"plugin": map[string]any{"key": "nope"}}))
+	r = s.must(201, s.do(s.admin, "POST", "/api/plugins", install))
+	if a := s.must(200, s.do(s.admin, "GET", "/api/plugins", nil)).Body["available"].([]any); len(a) != 1 {
+		t.Fatalf("still available after install: %v", a)
+	}
 	if dig(r.Body, "plugin", "enabled") != false || dig(r.Body, "plugin", "requested", "storage") != true || dig(r.Body, "plugin", "granted", "storage") != false {
 		t.Fatalf("install: %s", r.Raw)
 	}

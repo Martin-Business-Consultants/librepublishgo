@@ -9,6 +9,7 @@ import (
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 // pluginEnv is what plugins reach of the CMS (plugin.Env).
@@ -25,30 +26,32 @@ func (e pluginEnv) ReplaceSetting(ctx context.Context, key string, data map[stri
 	return err
 }
 
-// Site is lp_site's answer.
-func (e pluginEnv) Site(ctx context.Context) (map[string]any, error) {
+// Site is the site plugins run on.
+func (e pluginEnv) Site(ctx context.Context) (plugin.Site, error) {
 	g, err := e.a.setting(ctx, "general")
 	if err != nil {
-		return nil, err
+		return plugin.Site{}, err
 	}
 	email, err := e.a.setting(ctx, "email")
 	if err != nil {
-		return nil, err
+		return plugin.Site{}, err
 	}
-	return map[string]any{"name": str(g["title"]), "url": strings.TrimRight(str(g["site_base_url"]), "/"), "locale": e.a.defaultLocale(), "cms_url": e.a.BaseURL(), "contact_email": strOr(str(g["email"]), strOr(str(email["reply_to"]), str(email["from_email"]))),
-		"origins": e.a.siteOrigins(ctx)}, nil
+	return plugin.Site{Name: str(g["title"]), URL: strings.TrimRight(str(g["site_base_url"]), "/"), Locale: e.a.defaultLocale(), CMSURL: e.a.BaseURL(),
+		ContactEmail: strOr(str(g["email"]), strOr(str(email["reply_to"]), str(email["from_email"]))), Origins: e.a.siteOrigins(ctx)}, nil
 }
 
 // SendMail sends m through the site's mail settings.
 func (e pluginEnv) SendMail(ctx context.Context, m mail.Message) error { return e.a.sendMail(ctx, m) }
 
 // PutMedia adds f to the media library.
-func (e pluginEnv) PutMedia(ctx context.Context, f plugin.Media) (any, error) {
+func (e pluginEnv) PutMedia(ctx context.Context, f plugin.Media) (map[string]any, error) {
 	as, err := e.a.uploadAsset(ctx, nil, f.Filename, f.ContentType, bytes.NewReader(f.Data), map[string]string{"folder": f.Folder, "alt": f.Alt})
 	if err != nil {
 		return nil, err
 	}
-	return e.a.assetJSON(ctx, as), nil
+	var out map[string]any
+	err = json.Unmarshal(store.MustJSON(e.a.assetJSON(ctx, as)), &out)
+	return out, err
 }
 
 // Audit records a plugin's action in the audit log.
@@ -57,23 +60,18 @@ func (e pluginEnv) Audit(ctx context.Context, actor plugin.Actor, action string,
 	e.a.audit(ctx, who, action, "Plugin", id, label, meta)
 }
 
-// Content answers lp_content: {"page": "about"}, {"pages": true},
-// {"collection": "posts"}, {"collection": "posts", "entry": "hello"},
-// {"global": "nav"} — live content only, as the delivery API shows it.
-func (e pluginEnv) Content(ctx context.Context, in string) (any, error) {
-	var q map[string]any
-	if err := json.Unmarshal([]byte(in), &q); err != nil {
-		return nil, fmt.Errorf("lp_content takes a JSON query")
-	}
+// Content answers a plugin's query for live content, as the delivery API
+// shows it.
+func (e pluginEnv) Content(ctx context.Context, q plugin.ContentQuery) (any, error) {
 	a := e.a
 	switch {
-	case q["page"] != nil:
-		p, err := a.pageByPath(ctx, str(q["page"]), true)
+	case q.Page != "":
+		p, err := a.pageByPath(ctx, q.Page, true)
 		if err != nil {
 			return nil, err
 		}
 		return a.v1PageJSON(ctx, p)
-	case q["pages"] != nil:
+	case q.Pages:
 		list, err := a.pages(ctx, "status = 'published' ORDER BY path LIMIT 500")
 		if err != nil {
 			return nil, err
@@ -83,13 +81,13 @@ func (e pluginEnv) Content(ctx context.Context, in string) (any, error) {
 			out = append(out, O("id", p.ID, "path", p.Path, "title", p.Title, "locale", p.Locale, "url", a.publicPath(p), "updated_at", p.UpdatedAt))
 		}
 		return out, nil
-	case q["collection"] != nil:
-		col, err := a.collectionBySlug(ctx, str(q["collection"]))
+	case q.Collection != "":
+		col, err := a.collectionBySlug(ctx, q.Collection)
 		if err != nil {
 			return nil, err
 		}
-		if q["entry"] != nil {
-			e, err := a.entryBySlug(ctx, col.ID, str(q["entry"]), true)
+		if q.Entry != "" {
+			e, err := a.entryBySlug(ctx, col.ID, q.Entry, true)
 			if err != nil {
 				return nil, err
 			}
@@ -108,12 +106,12 @@ func (e pluginEnv) Content(ctx context.Context, in string) (any, error) {
 			out = append(out, o)
 		}
 		return out, nil
-	case q["global"] != nil:
-		g, err := a.globalBySlug(ctx, str(q["global"]))
+	case q.Global != "":
+		g, err := a.globalBySlug(ctx, q.Global)
 		if err != nil {
 			return nil, err
 		}
 		return a.v1GlobalJSON(ctx, g), nil
 	}
-	return nil, fmt.Errorf(`lp_content: ask for {"page"}, {"pages"}, {"collection"[, "entry"]} or {"global"}`)
+	return nil, fmt.Errorf("ask for a page, the pages, a collection (or one of its entries) or a global")
 }

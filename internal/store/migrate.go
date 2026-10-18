@@ -18,7 +18,11 @@ type migration func(ctx context.Context, tx *sql.Tx) error
 
 // migrations are the numbered changes, oldest first; user_version is how
 // many have run. Only ever append.
-var migrations = []migration{}
+var migrations = []migration{
+	// 1: plugins are Go compiled into the binary, not WebAssembly modules
+	// kept in the database.
+	func(ctx context.Context, tx *sql.Tx) error { return dropColumn(ctx, tx, "plugins", "wasm") },
+}
 
 // Version is the schema version this build migrates to (PRAGMA
 // user_version): a database above it was written by a newer build.
@@ -213,6 +217,19 @@ func (c column) definition() string {
 func hasColumn(ctx context.Context, db Querier, table, name string) (bool, error) {
 	n, err := Count(ctx, db, `SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, name)
 	return n > 0, err
+}
+
+// dropColumn drops table.name if it's there: what a migration removing a
+// column uses.
+func dropColumn(ctx context.Context, db Querier, table, name string) error {
+	if have, err := hasColumn(ctx, db, table, name); err != nil || !have {
+		return err
+	}
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, quoteIdent(table), quoteIdent(name)))
+	if err != nil {
+		return fmt.Errorf("schema: dropping %s.%s: %w", table, name, err)
+	}
+	return nil
 }
 
 // addColumn adds table.name (def is its type and constraints) unless it's
