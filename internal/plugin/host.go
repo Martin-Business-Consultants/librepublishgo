@@ -412,6 +412,10 @@ func (h *Host) Install(ctx context.Context, actor Actor, wasm []byte) (*Plugin, 
 	if err != nil {
 		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "That isn't a WebAssembly plugin this CMS can load: " + err.Error()}
 	}
+	// Compiling a module to read its manifest takes a burst of memory (a
+	// hundred MB or more for a Go-built plugin): once it's closed, that's
+	// handed back to the system rather than left to Go's slow return.
+	defer debug.FreeOSMemory()
 	defer probe.Close(ctx)
 	inst, err := probe.Instance(ctx, instanceConfig())
 	if err != nil {
