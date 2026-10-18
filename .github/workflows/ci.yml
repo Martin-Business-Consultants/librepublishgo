@@ -1,12 +1,13 @@
 # Format, lint, vet, race-tested tests with coverage, vulnerability scan,
-# the admin build, and the Astro integration
-# (packages/astro) with its end-to-end run, on every push and PR.
+# the admin build, and the Astro integration (librepublish-astro, its own
+# repository, at its main) with its end-to-end run, on every push and PR.
 #
 # The API contract (contracts/) is gated from both sides: TestContract (in the
 # Test job's go test) holds the CMS to the recorded files, and the astro job
-# holds the integration to the same files (test/contract.test.js, which also
-# fails when contracts/ differs from packages/astro/test/contracts.sha256). A
-# fixture change without the matching integration change fails one of them.
+# copies them into the integration and holds it to them (its
+# test/contract.test.js, which also fails when they differ from its
+# test/contracts.sha256). A fixture change without the matching integration
+# change, pushed to librepublish-astro's main, fails one of them.
 name: CI
 
 on:
@@ -123,29 +124,36 @@ jobs:
             exit 1
           }
 
-  # The Astro integration (packages/astro): its build, types and unit tests,
-  # which run on contracts/ — the integration's half of the contract gate.
+  # The Astro integration (librepublish-astro): its build, types and unit
+  # tests, run on this checkout's contracts/ — the integration's half of the
+  # contract gate.
   astro:
     name: Astro integration
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: packages/astro
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Martin-Business-Consultants/librepublish-astro
+          path: .astro-integration
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: packages/astro/package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - run: npm run typecheck
+          cache-dependency-path: .astro-integration/package-lock.json
+      - name: Install, on this checkout's contracts/
+        working-directory: .astro-integration
+        run: |
+          npm ci
+          npm run contracts:sync -- "$GITHUB_WORKSPACE"
+      - working-directory: .astro-integration
+        run: npm run typecheck
       - name: Test (on contracts/)
+        working-directory: .astro-integration
         run: npm test
 
-  # The example site built and served against a freshly built Go core, and
+  # Its example site built and served against a freshly built Go core, and
   # every failure the integration promises to catch.
   astro-e2e:
     name: Astro end to end
@@ -153,6 +161,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Martin-Business-Consultants/librepublish-astro
+          path: .astro-integration
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -162,18 +174,18 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: |
-            packages/astro/package-lock.json
-            packages/astro/example/package-lock.json
+            .astro-integration/package-lock.json
+            .astro-integration/example/package-lock.json
       - name: Build the Go core
         run: go build -o "$RUNNER_TEMP/librepublish" ./cmd/librepublish
       - name: Install the integration and the example
-        working-directory: packages/astro
+        working-directory: .astro-integration
         run: |
           npm ci
           npm run build
           (cd example && npm ci)
       - name: End to end
-        working-directory: packages/astro
+        working-directory: .astro-integration
         env:
           LIBREPUBLISH_BIN: ${{ runner.temp }}/librepublish
         run: npm run e2e

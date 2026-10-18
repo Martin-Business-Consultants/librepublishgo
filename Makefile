@@ -47,14 +47,17 @@ ui:
 ui-dev:
 	cd ui && npm run dev
 
-# The Astro integration (packages/astro): build, types, and its tests on
-# contracts/ — the other half of the contract gate TestContract starts.
+# The Astro integration (its own repository, librepublish-astro, checked out
+# at ASTRO, ../librepublish-astro by default): its tests on this checkout's
+# contracts/ — the other half of the contract gate TestContract starts. It
+# copies them in (contracts:sync), so its librepublishgo/ shows the change.
+ASTRO ?= ../librepublish-astro
 astro:
-	cd packages/astro && npm ci && npm run build && npm run typecheck && npm test
+	cd $(ASTRO) && npm ci && npm run contracts:sync -- $(CURDIR) && npm run typecheck && npm test
 
-# The example site against a freshly built core, end to end.
+# Its example site against a freshly built core, end to end.
 astro-e2e: build
-	cd packages/astro && npm ci && npm run build && (cd example && npm ci) && LIBREPUBLISH_BIN=$(CURDIR)/dist/librepublish npm run e2e
+	cd $(ASTRO) && npm ci && npm run build && (cd example && npm ci) && LIBREPUBLISH_BIN=$(CURDIR)/dist/librepublish npm run e2e
 
 # dist/librepublish-<os>-<arch>[.exe] and dist/checksums.txt: what a release
 # attaches, and what install.sh downloads.

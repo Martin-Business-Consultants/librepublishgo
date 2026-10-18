@@ -2,7 +2,8 @@
 
 These files are the contract between the CMS and the sites built on it.
 They're recorded from a real install, not written by hand: the Go tests
-and the Astro integration (`packages/astro`) both run against them, so
+and the Astro integration ([librepublish-astro](https://github.com/Martin-Business-Consultants/librepublish-astro), which keeps a copy
+in its `librepublishgo/`) both run against them, so
 neither side can drift from the other without a test failing.
 
 | Path | What |
@@ -42,8 +43,8 @@ Two halves, both in CI, both reading these same files:
 - **The Go half**: `TestContract` (`internal/cms/contract_test.go`, part of
   `make test` and CI's Test job) answers every request in `index.json` from
   a freshly seeded install and fails on any difference from its file.
-- **The integration half**: `packages/astro`'s tests (`make astro`, CI's
-  `astro` job) run on these files: the schema and form digests recomputed
+- **The integration half**: librepublish-astro's tests (`make astro`, CI's
+  `astro` job, both of which copy these files into it first) run on them: the schema and form digests recomputed
   with its own canonical JSON must equal the recorded ones; its form
   validator must reach the recorded 422's errors (and pass the 200's post);
   `<Form>` must render every field of `form-definition.json`; its loaders,
@@ -67,8 +68,10 @@ on purpose, in one change:
 1. Change the Go side.
 2. `go test ./internal/cms -run TestContract -update`, and review the diff
    of `contracts/`.
-3. Update `packages/astro` for it: its types (`src/types.ts`,
-   `src/forms/types.ts`), its validation (`src/schema/`, `src/forms/rules.ts`)
-   and its tests; then `npm run contracts:pin` in `packages/astro`.
+3. Update librepublish-astro for it, from this branch:
+   `npm run contracts:sync -- ../librepublishgo` there, then its types
+   (`src/types.ts`, `src/forms/types.ts`), its validation (`src/schema/`,
+   `src/forms/rules.ts`) and its tests; then `npm run contracts:pin`, and
+   push it to its main (CI here tests against that).
 4. Both halves pass: `make test` and `make astro` (and `make astro-e2e`
    against a real binary).
