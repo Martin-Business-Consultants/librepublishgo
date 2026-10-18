@@ -24,7 +24,50 @@ import (
 const keptBackups = 3
 
 func (a *App) updateRoutes(h func(string, handlerFunc, ...func(*route))) {
+	h("GET /api/tools/update", a.updateStatus, tool("update_status", "Which version this is, the newest release, and whether this install can update itself to it.", query("check", "boolean", "Ask GitHub now rather than use the last answer.")))
 	h("POST /api/tools/update", a.applyUpdate, tool("update_cms", "Update this CMS to the newest release: a backup first, then a restart on it (a few seconds offline). Administrators only.", note("It answers before restarting: wait, then get_manifest says the new version.")))
+}
+
+// updateStatus is Settings › Updates: this version, the newest release
+// (asked of GitHub at most every ten minutes, or now with ?check=1), and
+// what can be done about it here.
+func (a *App) updateStatus(c *Ctx) error {
+	if err := c.needSystem(); err != nil {
+		return err
+	}
+	out := O("running", a.cfg.Version, "release_build", update.Newer("999999.0.0", a.cfg.Version), "can_update", a.cfg.HandOver != nil,
+		"in_container", update.InContainer())
+	if failed, at := update.Failed(a.cfg.DataDir); failed != "" {
+		out = append(out, kv{"failed", O("version", failed, "at", at.UTC().Format(time.RFC3339))})
+	}
+	r, checkedAt, err := a.latestRelease(c, c.truthy("check"))
+	if err != nil {
+		out = append(out, kv{"check_error", err.Error()})
+	} else {
+		newer := update.Newer(r.Version, a.cfg.Version)
+		if newer {
+			a.newer.Store(r)
+		}
+		out = append(out, kv{"latest", O("version", r.Version, "url", r.URL, "published_at", r.PublishedAt.UTC().Format(time.RFC3339))}, kv{"newer", newer})
+	}
+	out = append(out, kv{"checked_at", checkedAt.UTC().Format(time.RFC3339)})
+	return c.JSON(200, out)
+}
+
+// latestRelease is the newest release, asked again when the last answer is
+// over ten minutes old (or now, when fresh).
+func (a *App) latestRelease(c *Ctx, fresh bool) (*update.Release, time.Time, error) {
+	a.releaseMu.Lock()
+	defer a.releaseMu.Unlock()
+	if !fresh && a.release != nil && time.Since(a.releaseAt) < 10*time.Minute {
+		return a.release, a.releaseAt, nil
+	}
+	r, err := update.Latest(c.R.Context())
+	if err != nil {
+		return nil, time.Now(), err
+	}
+	a.release, a.releaseAt = &r, time.Now()
+	return a.release, a.releaseAt, nil
 }
 
 func (a *App) applyUpdate(c *Ctx) error {

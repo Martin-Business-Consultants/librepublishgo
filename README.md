@@ -36,7 +36,9 @@ make dist                     # every platform, with checksums.txt
 make plugin                   # dist/visits.wasm, the example plugin
 ```
 
-Releases: push a `vX.Y.Z` tag and `.github/workflows/release.yml` tests,
+Releases: set `VERSION` to the release's number (it's what an image built
+from the repository reports, and what updates compare), commit it, push a
+matching `vX.Y.Z` tag, and `.github/workflows/release.yml` tests,
 builds every platform and publishes them with `checksums.txt`, which
 `install.sh` downloads.
 

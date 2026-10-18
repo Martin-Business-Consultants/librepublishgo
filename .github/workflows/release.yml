@@ -24,6 +24,10 @@ jobs:
         with:
           go-version: "1.26.x"
           check-latest: true
+      # The VERSION file says which release main is: what a host that
+      # builds from the repository reports, and what updates compare.
+      - name: The tag matches VERSION
+        run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}" || { echo "::error::VERSION says $(cat VERSION), the tag ${GITHUB_REF_NAME}"; exit 1; }
       - run: make test
       - run: make dist VERSION="${GITHUB_REF_NAME#v}"
       - name: Publish

@@ -19,8 +19,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/librepublish ./cmd/librepublish
+# The release this is: the VERSION file, unless the build passes one
+# (Hoster and other hosts that build from the repository pass none).
+ARG VERSION=
+RUN V="${VERSION:-$(cat VERSION 2>/dev/null || echo dev)}" \
+ && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${V#v}" -o /out/librepublish ./cmd/librepublish
 
 # Alpine for CA certificates (SMTP, webhooks, deploy hooks) and su-exec: the
 # container starts as root only to hand /data to the app user, whatever owns

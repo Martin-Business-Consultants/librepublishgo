@@ -8,6 +8,7 @@
     ["Site", [["General", "/settings"], ["Brand", "/settings/brand"], ["AI", "/settings/ai"], ["Site repository", "/settings/github"]]],
     ["Publishing", [["Deploy", "/settings/deploy"], ["Email", "/settings/email"]]],
     ["Access", [["Service tokens", "/settings/tokens"]]],
+    ["System", [["Updates", "/settings/updates"]]],
   ];
 </script>
 

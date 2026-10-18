@@ -101,6 +101,10 @@ type App struct {
 	cmsURL atomic.Pointer[string]
 	// The newest release, when it's newer than this build (UpdateCheck).
 	newer atomic.Pointer[update.Release]
+	// The last answer to "what's the newest release" (Settings › Updates).
+	releaseMu sync.Mutex
+	release   *update.Release
+	releaseAt time.Time
 
 	limiter *ratelimit.Limiter // the delivery API's, per token
 	// Sign-in: ten tries a minute from one address, and ten at one account

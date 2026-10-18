@@ -1,5 +1,5 @@
 <script>
-  import { confirm } from "../lib/confirm.svelte.js";
+  import { updateTo } from "../lib/update.js";
   // The dashboard: four cards (pages, collections, globals, working with
   // the API), what needs doing (starter blocks, changes waiting for review),
   // then recent activity beside site health.
@@ -14,26 +14,11 @@
   import { get, post } from "../lib/api.js";
   import { session } from "../lib/session.svelte.js";
 
-  // The update button: a backup into the data directory, the new release
-  // staged, then the CMS hands over to it (a few seconds offline); this waits
-  // for it to answer as the new version, then reloads.
+  // The update button (lib/update.js).
   let updating = $state("");
   async function updateNow() {
-    const u = session.me.update;
-    if (!(await confirm({ title: `Update to ${u.version}?`, message: "A backup is taken first (it stays in the data directory). The CMS then restarts on the new version: a few seconds offline. If the new version doesn't come up, it goes back to this one.", confirmLabel: "Update" }))) return;
-    updating = "Taking a backup and getting the new version ready…";
     try {
-      const r = await post("/tools/update", {});
-      updating = `Restarting on ${r.updating_to}…`;
-      const until = Date.now() + 120000;
-      while (Date.now() < until) {
-        await new Promise((ok) => setTimeout(ok, 2000));
-        try {
-          const s = await fetch("/api/session", { headers: { Accept: "application/json" } }).then((x) => x.json());
-          if (s.version === r.updating_to || s.version === `v${r.updating_to}`) { location.reload(); return; }
-        } catch { /* still restarting */ }
-      }
-      updating = "It's taking longer than expected: reload in a minute. If it's still the old version, the dashboard will say why.";
+      await updateTo(session.me.update.version, (msg) => (updating = msg));
     } catch (e) {
       updating = "";
       toastError(e);

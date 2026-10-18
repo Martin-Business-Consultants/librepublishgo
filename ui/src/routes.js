@@ -23,6 +23,7 @@ import Settings from "./routes/Settings.svelte";
 import SettingsDeploy from "./routes/SettingsDeploy.svelte";
 import SettingsTokens from "./routes/SettingsTokens.svelte";
 import SettingsBrand from "./routes/SettingsBrand.svelte";
+import SettingsUpdates from "./routes/SettingsUpdates.svelte";
 import Plugins from "./routes/Plugins.svelte";
 import PluginScreen from "./routes/PluginScreen.svelte";
 import Account from "./routes/Account.svelte";
@@ -58,6 +59,7 @@ export const routes = [
   ["/settings/deploy", SettingsDeploy],
   ["/settings/tokens", SettingsTokens],
   ["/settings/brand", SettingsBrand],
+  ["/settings/updates", SettingsUpdates],
   ["/settings/:section", Settings],
   ["/plugins", Plugins],
   ["/plugins/:key/:screen", PluginScreen],
