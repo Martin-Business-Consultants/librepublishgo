@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tools › Clean up content, from a shell: the same clean-up (src/lib/cleanup.js)
+// The content clean-up, from a shell: the same clean-up (src/lib/cleanup.js)
 // through the CMS's API with an Admin token, for when the admin isn't the
 // way in. Prose fields become rich text (the editor's own document, made by
 // Tiptap with the editor's extensions), and with the flags image URL caches,
