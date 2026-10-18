@@ -119,10 +119,10 @@
   <h2>Updating</h2>
   <ol class="steps">
     <li><strong>See what's new</strong> The dashboard says when a new version is out, with a link to its notes (<a href="https://github.com/Martin-Business-Consultants/librepublishgo/releases">releases</a>).</li>
-    <li><strong>Back up</strong> Hoster <b>Backups › Back up now</b>.</li>
-    <li><strong>Deploy</strong> Press <b>Deploy</b>, or point the app's branch at the new release's tag (e.g. <code>v2.0.3</code>) and deploy. The new version starts beside the old one and takes over once it's healthy, with no downtime. The database updates itself on start.</li>
+    <li><strong>Back up</strong> Hoster <b>Backups › Back up now</b> (the button below also takes its own).</li>
+    <li><strong>Update</strong> Press <b>Update now</b> on the dashboard. It takes a backup into the site's own volume (<code>/data/backups/</code>), downloads the new version there (checked against the release's checksums), and restarts on it: a few seconds offline. The database updates itself on start. If the new version doesn't come up, the CMS goes back to the one before and the dashboard says so.</li>
   </ol>
-  <p>To go back, deploy the previous version. If a release's notes say it changed the database, restore the backup instead.</p>
+  <p>Each site updates on its own, from its own volume. Deploying a newer image from Hoster works too, and takes over from an update made with the button. To go back, deploy the previous version from Hoster. If a release's notes say it changed the database, restore the backup from <code>/data/backups/</code> (Tools › Import) instead.</p>
 
   <h2>Several sites on one server</h2>
   <table>

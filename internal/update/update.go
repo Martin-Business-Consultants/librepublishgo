@@ -138,14 +138,24 @@ func InContainer() bool {
 // checksums.txt, and puts it in place of the binary at exe (the old one is
 // kept beside it as <exe>.old until the next update).
 func Install(ctx context.Context, r Release, exe string) error {
+	bin, err := Download(ctx, r)
+	if err != nil {
+		return err
+	}
+	return installBytes(bin, exe)
+}
+
+// Download is r's binary for this machine, checked against r's
+// checksums.txt.
+func Download(ctx context.Context, r Release) ([]byte, error) {
 	name := AssetName()
 	binURL, sumsURL := r.assets[name], r.assets["checksums.txt"]
 	if binURL == "" || sumsURL == "" {
-		return fmt.Errorf("release %s has no %s (or no checksums.txt)", r.Version, name)
+		return nil, fmt.Errorf("release %s has no %s (or no checksums.txt)", r.Version, name)
 	}
 	sums, err := fetch(ctx, sumsURL, 1<<20)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	want := ""
 	sc := bufio.NewScanner(strings.NewReader(string(sums)))
@@ -155,16 +165,22 @@ func Install(ctx context.Context, r Release, exe string) error {
 		}
 	}
 	if want == "" {
-		return fmt.Errorf("checksums.txt doesn't list %s", name)
+		return nil, fmt.Errorf("checksums.txt doesn't list %s", name)
 	}
 	bin, err := fetch(ctx, binURL, 512<<20)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sum := sha256.Sum256(bin)
 	if got := hex.EncodeToString(sum[:]); got != want {
-		return fmt.Errorf("%s doesn't match its checksum (got %s, want %s): not installed", name, got, want)
+		return nil, fmt.Errorf("%s doesn't match its checksum (got %s, want %s): not installed", name, got, want)
 	}
+	return bin, nil
+}
+
+// installBytes puts bin in place of the binary at exe, keeping the old one
+// beside it as <exe>.old.
+func installBytes(bin []byte, exe string) error {
 	dir := filepath.Dir(exe)
 	tmp, err := os.CreateTemp(dir, ".librepublish-update-*")
 	if err != nil {

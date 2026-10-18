@@ -49,6 +49,10 @@ type Config struct {
 	// Version is this build's, "dev" when empty. The API it serves is
 	// frozen whatever the version.
 	Version string
+	// HandOver stops serving and hands over to the release binary at bin
+	// (the update button); nil where that can't be done (tests, one-off
+	// commands).
+	HandOver func(bin string)
 	// UpdateCheck looks for a newer release once a day (GitHub's), for the
 	// admin's "a new version is available"; UPDATE_CHECK=0 turns it off.
 	UpdateCheck bool
@@ -223,6 +227,9 @@ func (a *App) updateNoticeFor(actor *Actor) any {
 // updateNotice is the newer release, for an Administrator: what it is and
 // how this install takes it (a container's image, or `librepublish update`).
 func (a *App) updateNotice() any {
+	if failed, at := update.Failed(a.cfg.DataDir); failed != "" && update.Newer(failed, a.cfg.Version) {
+		return O("failed", failed, "failed_at", at.UTC().Format(time.RFC3339), "running", a.cfg.Version)
+	}
 	r := a.newer.Load()
 	if r == nil {
 		return nil
@@ -231,7 +238,7 @@ func (a *App) updateNotice() any {
 	if update.InContainer() {
 		how = "image"
 	}
-	return O("version", r.Version, "url", r.URL, "how", how)
+	return O("version", r.Version, "url", r.URL, "how", how, "button", a.cfg.HandOver != nil)
 }
 
 // Close stops what runs in the background, waits for it, then closes the

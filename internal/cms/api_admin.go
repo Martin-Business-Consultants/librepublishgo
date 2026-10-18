@@ -78,6 +78,7 @@ func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("GET /api/site_health", a.siteHealth)
 	h("GET /api/tools/backup", a.backup)
 	a.importRoutes(h)
+	a.updateRoutes(h)
 
 	h("POST /api/device/code", a.deviceCode, open)
 	h("POST /api/device/token", a.deviceToken, open)

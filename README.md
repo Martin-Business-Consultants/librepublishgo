@@ -94,6 +94,13 @@ and the container image `ghcr.io/martin-business-consultants/librepublishgo:X.Y.
 one is out (it asks GitHub once a day; `UPDATE_CHECK=0` turns that off).
 Take a backup first (Tools › Backup), then:
 
+- **From the admin**, press **Update now** on the dashboard (Administrators):
+  it backs up into `DATA_DIR/backups/`, downloads the release into
+  `DATA_DIR/releases/` (checked against `checksums.txt`, run once to be sure),
+  and restarts on it in place: a few seconds offline. Every start runs the
+  newer of that release and the binary started (a newer image deployed later
+  takes over), and a release that doesn't come up is gone back from, with
+  the dashboard saying so.
 - **On a container host**, deploy the new version: the image tag, or the
   `vX.Y.Z` git tag if the host builds from the repository. The new
   container starts beside the old one on the same `/data` and takes over

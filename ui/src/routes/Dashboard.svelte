@@ -1,4 +1,5 @@
 <script>
+  import { confirm } from "../lib/confirm.svelte.js";
   // The dashboard: four cards (pages, collections, globals, working with
   // the API), what needs doing (starter blocks, changes waiting for review),
   // then recent activity beside site health.
@@ -12,6 +13,32 @@
   import Spinner from "../lib/components/Spinner.svelte";
   import { get, post } from "../lib/api.js";
   import { session } from "../lib/session.svelte.js";
+
+  // The update button: a backup into the data directory, the new release
+  // staged, then the CMS hands over to it (a few seconds offline); this waits
+  // for it to answer as the new version, then reloads.
+  let updating = $state("");
+  async function updateNow() {
+    const u = session.me.update;
+    if (!(await confirm({ title: `Update to ${u.version}?`, message: "A backup is taken first (it stays in the data directory). The CMS then restarts on the new version: a few seconds offline. If the new version doesn't come up, it goes back to this one.", confirmLabel: "Update" }))) return;
+    updating = "Taking a backup and getting the new version ready…";
+    try {
+      const r = await post("/tools/update", {});
+      updating = `Restarting on ${r.updating_to}…`;
+      const until = Date.now() + 120000;
+      while (Date.now() < until) {
+        await new Promise((ok) => setTimeout(ok, 2000));
+        try {
+          const s = await fetch("/api/session", { headers: { Accept: "application/json" } }).then((x) => x.json());
+          if (s.version === r.updating_to || s.version === `v${r.updating_to}`) { location.reload(); return; }
+        } catch { /* still restarting */ }
+      }
+      updating = "It's taking longer than expected: reload in a minute. If it's still the old version, the dashboard will say why.";
+    } catch (e) {
+      updating = "";
+      toastError(e);
+    }
+  }
   import { toast, toastError } from "../lib/toast.svelte.js";
   import { blockTypes } from "../lib/blocks.svelte.js";
   import { plural } from "../lib/format.js";
@@ -46,12 +73,19 @@
 
 <PageHeader title="Dashboard" cli="cms doctor" />
 
-{#if session.me?.update}
+{#if session.me?.update?.failed}
+  {@const u = session.me.update}
+  <Notice tone="warning" class="mb-6">
+    The update to <strong>{u.failed}</strong> didn't come up, so this is still {u.running}. Nothing was lost: a backup from just before it is in the data directory's <code class="font-mono text-xs">backups/</code>. The logs say why it stopped.
+  </Notice>
+{:else if session.me?.update}
   {@const u = session.me.update}
   <Notice tone="info" class="mb-6">
-    Libre Publish <strong>{u.version}</strong> is out (this is {session.version}): <a href={u.url} target="_blank" rel="noopener noreferrer" class="font-medium underline underline-offset-4">what's new</a>.
-    {#if u.how === "image"}Deploy it on your host: the image <code class="font-mono text-xs">ghcr.io/martin-business-consultants/librepublishgo:{u.version}</code>, or the <code class="font-mono text-xs">v{u.version}</code> tag.{:else}Install it with <code class="font-mono text-xs">librepublish update</code>, then restart the service.{/if}
-    Take a backup first (Tools › Backup).
+    <div class="flex flex-wrap items-center gap-3">
+      <span>Libre Publish <strong>{u.version}</strong> is out (this is {session.version}): <a href={u.url} target="_blank" rel="noopener noreferrer" class="font-medium underline underline-offset-4">what's new</a>.</span>
+      {#if u.button}<Button size="sm" variant="primary" loading={updating} onclick={updateNow}>Update now</Button>{/if}
+    </div>
+    {#if updating}<p class="mt-2">{updating}</p>{:else if !u.button}<p class="mt-2">Install it with <code class="font-mono text-xs">librepublish update</code>, then restart the service.</p>{/if}
   </Notice>
 {/if}
 

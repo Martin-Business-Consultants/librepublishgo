@@ -51,9 +51,17 @@ const (
 )
 
 func main() {
+	// Where releases are asked for (GitHub's API unless set: a mirror, a test).
+	if api := os.Getenv("LIBREPUBLISH_RELEASES_API"); api != "" {
+		update.API = strings.TrimRight(api, "/")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, stop, os.Args[1:])
 	stop()
+	if err == nil && handOverTo != "" {
+		// The update button: everything is closed; become the release.
+		err = update.Exec(handOverTo)
+	}
 	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return
 	}
@@ -260,6 +268,21 @@ func serve(ctx context.Context, stop func(), args []string) (err error) {
 	if err := checkPersistent(cfg); err != nil {
 		return err
 	}
+	// A release the update button put in this data directory, newer than
+	// this binary, is what runs (update.Choose).
+	if bin, ok := update.Choose(cfg.DataDir, version); ok {
+		cfg.Logger.Info("handing over to the release in the data directory", "binary", bin, "this", version)
+		if err := update.Exec(bin); err != nil {
+			cfg.Logger.Warn("couldn't hand over; running this version", "err", err)
+		}
+	}
+	handover := make(chan string, 1)
+	cfg.HandOver = func(bin string) {
+		select {
+		case handover <- bin:
+		default:
+		}
+	}
 	// No import under a server (servers may overlap, as a deploy does).
 	lock, err := datalock.AcquireShared(cfg.DataDir)
 	switch {
@@ -301,11 +324,16 @@ func serve(ctx context.Context, stop func(), args []string) (err error) {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	cfg.Logger.Info("libre publish is up", "version", version, "admin", app.App().BaseURL()+"/cms/", "data", cfg.DataDir, "addr", ln.Addr().String())
+	// Serving: a release being tried has come up (update.Confirm).
+	update.Confirm(cfg.DataDir, version)
 
 	select {
 	case err := <-served:
 		return err
 	case <-ctx.Done():
+	case bin := <-handover:
+		handOverTo = bin
+		cfg.Logger.Info("updating: finishing requests in flight, then handing over", "binary", bin)
 	}
 	stop()
 	cfg.Logger.Info("shutting down: finishing requests in flight (a second signal quits now)")
@@ -600,6 +628,10 @@ func selfUpdate(ctx context.Context, args []string) error {
 	fmt.Printf("Installed %s at %s. Restart the service to run it (systemctl restart librepublish, or however it's started).\n", r.Version, exe)
 	return nil
 }
+
+// handOverTo is the release serve stopped to hand over to (the update
+// button), which main becomes once everything is closed.
+var handOverTo string
 
 // checkPersistent refuses, in a container, a data directory the next
 // deploy would lose (no volume, or an anonymous one), unless EPHEMERAL_DATA=1

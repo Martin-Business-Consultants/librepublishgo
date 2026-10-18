@@ -3,7 +3,9 @@ package cms
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -32,42 +34,80 @@ func (a *App) backup(c *Ctx) error {
 	if withKey && !c.Actor.Role.System {
 		return &apierr.Error{Status: 403, Code: "forbidden", Message: "Only the Administrator role can include the secret key in a backup.", Capability: wildcard}
 	}
-	tmp, err := os.MkdirTemp("", "lp-backup-")
+	set, err := a.prepareBackup(c.R.Context(), withKey)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
-	snap := filepath.Join(tmp, "cms.sqlite3")
-	if _, err := a.store.ExecContext(c.R.Context(), `VACUUM INTO ?`, snap); err != nil {
-		return err
+	defer set.close()
+	a.audit(c.R.Context(), c.Actor, "backup.downloaded", "Site", 0, "backup", map[string]any{"secret_key": withKey})
+	c.W.Header().Set("Content-Type", "application/gzip")
+	c.W.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="librepublish-%s.tar.gz"`, time.Now().UTC().Format("20060102-150405")))
+	// The download has begun: a failure from here can't be a JSON error,
+	// so the connection is cut and the client sees a broken archive rather
+	// than a short one that looks whole.
+	if err := a.writeBackup(c.W, set); err != nil {
+		a.log.Error("backup", "err", err)
+		panic(http.ErrAbortHandler)
+	}
+	return nil
+}
+
+// backupSet is what a backup holds, gathered before it's written: a
+// consistent copy of the database, the uploaded files, the manifest, and
+// the secret key when asked for.
+type backupSet struct {
+	tmp, snap string
+	files     []string
+	manifest  []byte
+	key       []byte
+}
+
+func (b *backupSet) close() { _ = os.RemoveAll(b.tmp) }
+
+func (a *App) prepareBackup(ctx context.Context, withKey bool) (*backupSet, error) {
+	tmp, err := os.MkdirTemp("", "lp-backup-")
+	if err != nil {
+		return nil, err
+	}
+	b := &backupSet{tmp: tmp, snap: filepath.Join(tmp, "cms.sqlite3")}
+	if _, err := a.store.ExecContext(ctx, `VACUUM INTO ?`, b.snap); err != nil {
+		b.close()
+		return nil, err
 	}
 	root := filepath.Join(a.cfg.DataDir, "storage")
-	var files []string
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.Type().IsRegular() {
-			files = append(files, p)
+			b.files = append(b.files, p)
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		b.close()
+		return nil, err
 	}
 	var version int
-	if err := a.store.QueryRowContext(c.R.Context(), `PRAGMA user_version`).Scan(&version); err != nil {
-		return err
+	if err := a.store.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		b.close()
+		return nil, err
 	}
-	manifest, err := json.MarshalIndent(restore.Manifest{Format: restore.ManifestFormat, Version: 1, CMSVersion: a.cfg.Version,
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339), SchemaVersion: version, Blobs: len(files), SecretKey: withKey}, "", "  ")
+	b.manifest, err = json.MarshalIndent(restore.Manifest{Format: restore.ManifestFormat, Version: 1, CMSVersion: a.cfg.Version,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339), SchemaVersion: version, Blobs: len(b.files), SecretKey: withKey}, "", "  ")
 	if err != nil {
-		return err
+		b.close()
+		return nil, err
 	}
-	a.audit(c.R.Context(), c.Actor, "backup.downloaded", "Site", 0, "backup", map[string]any{"secret_key": withKey})
-	c.W.Header().Set("Content-Type", "application/gzip")
-	c.W.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="librepublish-%s.tar.gz"`, time.Now().UTC().Format("20060102-150405")))
-	gz := gzip.NewWriter(c.W)
+	if withKey {
+		b.key = []byte(a.secrets.Hex() + "\n")
+	}
+	return b, nil
+}
+
+// writeBackup writes b as a .tar.gz to w.
+func (a *App) writeBackup(w io.Writer, b *backupSet) error {
+	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	addBytes := func(name string, data []byte) error {
 		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(data)), ModTime: time.Now(), Typeflag: tar.TypeReg}); err != nil {
@@ -97,38 +137,25 @@ func (a *App) backup(c *Ctx) error {
 		_, err = io.Copy(tw, f)
 		return err
 	}
-	// The download has begun: a failure from here can't be a JSON error,
-	// so the connection is cut and the client sees a broken archive rather
-	// than a short one that looks whole.
-	abort := func(err error) {
-		a.log.Error("backup", "err", err)
-		panic(http.ErrAbortHandler)
+	if err := addBytes("manifest.json", b.manifest); err != nil {
+		return err
 	}
-	if err := addBytes("manifest.json", manifest); err != nil {
-		abort(err)
-	}
-	if withKey {
-		if err := addBytes("secret.key", []byte(a.secrets.Hex()+"\n")); err != nil {
-			abort(err)
+	if b.key != nil {
+		if err := addBytes("secret.key", b.key); err != nil {
+			return err
 		}
 	}
-	if err := add(snap, "cms.sqlite3"); err != nil {
-		abort(err)
+	if err := add(b.snap, "cms.sqlite3"); err != nil {
+		return err
 	}
-	for _, p := range files {
+	for _, p := range b.files {
 		rel, err := filepath.Rel(a.cfg.DataDir, p)
 		if err != nil {
-			abort(err)
+			return err
 		}
 		if err := add(p, filepath.ToSlash(rel)); err != nil {
-			abort(err)
+			return err
 		}
 	}
-	if err := tw.Close(); err != nil {
-		abort(err)
-	}
-	if err := gz.Close(); err != nil {
-		abort(err)
-	}
-	return nil
+	return errors.Join(tw.Close(), gz.Close())
 }
