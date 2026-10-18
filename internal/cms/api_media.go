@@ -13,12 +13,12 @@ import (
 )
 
 func (a *App) mediaRoutes(h func(string, handlerFunc, ...func(*route))) {
-	h("GET /api/assets", a.listAssets)
-	h("POST /api/assets", a.createAsset)
-	h("GET /api/assets/{id}", a.showAsset)
-	h("PATCH /api/assets/{id}", a.updateAsset)
+	h("GET /api/assets", a.listAssets, tool("list_assets", "List the media library.", query("q", "string", "Words in the name or alt text."), query("folder", "string", "Only this folder."), query("type", "string", "image, video, document."), query("page", "integer", "Page of results (from 1)."), query("per", "integer", "Results per page.")))
+	h("POST /api/assets", a.createAsset, tool("upload_asset", "Add a file to the media library.", file("file", "The file: a path (command line), or {filename, content_base64} (MCP)."), formField("alt", "Alt text, for an image."), formField("folder", "The folder to put it in.")))
+	h("GET /api/assets/{id}", a.showAsset, tool("get_asset", "One file in the media library: its URLs, size, alt text, where it's used."))
+	h("PATCH /api/assets/{id}", a.updateAsset, tool("update_asset", "Change a file's name, alt text, caption or folder.", body("asset", "name, alt, caption, description, folder.", true)))
 	h("PUT /api/assets/{id}", a.updateAsset)
-	h("DELETE /api/assets/{id}", a.destroyAsset)
+	h("DELETE /api/assets/{id}", a.destroyAsset, tool("delete_asset", "Move a file to the trash (refused while content uses it)."))
 	h("PATCH /api/asset_folders", a.renameFolder)
 	h("DELETE /api/asset_folders", a.deleteFolder)
 }
@@ -67,7 +67,7 @@ func (a *App) listAssets(c *Ctx) error {
 	pages := (total + per - 1) / per
 	c.Summary = fmt.Sprintf("%d %s.", total, plural(total, "file"))
 	if len(list) > 0 {
-		c.Crumbs = []Crumb{crumb("What uses one", fmt.Sprintf("cms asset %d", list[0].ID)), crumb("Only unused", "cms assets --unused")}
+		c.Crumbs = []Crumb{step("What uses one", "get_asset", "id", list[0].ID)}
 	}
 	return c.JSON(200, O("assets", out, "pagination", O("page", page, "per", per, "total", total, "total_pages", pages)))
 }

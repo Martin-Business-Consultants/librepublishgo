@@ -14,7 +14,7 @@
   get("/collections").then((r) => (cols = r.collections));
 </script>
 
-<PageHeader title="Collections" cli="cms collections">
+<PageHeader title="Collections" cli="librepublish list_collections">
   {#snippet actions()}{#if session.can("collections:write")}<Button icon="add" href="#/collections/new">New collection</Button>{/if}{/snippet}
 </PageHeader>
 

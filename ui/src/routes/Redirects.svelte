@@ -40,7 +40,7 @@
   }
 </script>
 
-<PageHeader title="Redirects" cli="cms redirects all">
+<PageHeader title="Redirects" cli="librepublish list_redirects">
   {#snippet actions()}
     <Button href="/api/redirects/export" icon="download">Export CSV</Button>
     {#if session.can("redirects:write")}

@@ -69,7 +69,7 @@
   </Panel>
   <Panel title="API token">
     <div class="flex flex-col gap-4 p-6">
-      <p class="text-sm text-muted-foreground">For the <code class="rounded-sm bg-muted px-1 font-mono text-xs">cms</code> CLI where <code class="rounded-sm bg-muted px-1 font-mono text-xs">cms login</code> can't open a browser. It acts as you, with your role.</p>
+      <p class="text-sm text-muted-foreground">For <code class="rounded-sm bg-muted px-1 font-mono text-xs">librepublish</code> on a machine where <code class="rounded-sm bg-muted px-1 font-mono text-xs">librepublish login</code> can't open a browser, or an AI app connecting to <code class="rounded-sm bg-muted px-1 font-mono text-xs">/mcp</code>. It acts as you, with your role.</p>
       {#if token}<SecretBox value={token} note="Shown once." />{/if}
       <div><Button icon="refresh" onclick={rotate}>Rotate and show</Button></div>
     </div>

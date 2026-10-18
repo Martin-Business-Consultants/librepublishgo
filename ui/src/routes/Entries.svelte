@@ -82,7 +82,7 @@
   const statusOptions = $derived([{ label: "All", value: "", count: counts[""] }, ...["published", "draft", "archived"].filter((s) => counts[s]).map((s) => ({ label: s[0].toUpperCase() + s.slice(1), value: s, count: counts[s] }))]);
 </script>
 
-<PageHeader title={col?.name || "…"} icon="newspaper" cli="cms entries {slug}">
+<PageHeader title={col?.name || "…"} icon="newspaper" cli="librepublish list_entries --slug {slug}">
   {#snippet actions()}
     {#if session.can("collections:write")}<Button href="#/collections/{slug}/settings">Schema</Button>{/if}
     {#if session.can("entries:write")}<Button icon="add" href="#/collections/{slug}/new">New entry</Button>{/if}

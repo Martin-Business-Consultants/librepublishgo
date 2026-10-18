@@ -113,6 +113,21 @@ The database is brought up to date on start, by itself. Going back to an
 older version is deploying it again, unless a release's notes say it
 changed the database, in which case it's restoring the backup.
 
+### Working on a site: the command line and AI agents
+
+The same binary works on a site, from a terminal, a script or an AI app
+(Claude Code, Codex, Cursor, …), with the site's own tools:
+
+```sh
+librepublish login https://cms.example.com     # approve it in the admin
+librepublish tools                             # what the site has
+librepublish list_pages --status draft
+librepublish mcp setup                         # add it to your AI apps
+```
+
+Every site is also an MCP server at `/mcp`. [docs/agents.md](docs/agents.md)
+has the rest.
+
 From the command line, without the admin:
 
 ```sh

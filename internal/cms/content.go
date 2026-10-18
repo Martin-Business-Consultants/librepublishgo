@@ -1180,7 +1180,7 @@ func (a *App) webhookPayload(c *Content) Obj {
 
 // ---- references ----------------------------------------------------------
 
-// writeReferences records what a record points at, for `cms refs` and the
+// writeReferences records what a record points at, for GET /api/references and the
 // unused-media list, in the Rails core's content_references rows: a block's
 // references at its index, the frontmatter's and SEO's at -1.
 func (a *App) writeReferences(ctx context.Context, tx *sql.Tx, c *Content) error {

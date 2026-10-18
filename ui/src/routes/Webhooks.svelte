@@ -47,7 +47,7 @@
   function toggle(ev, on) { editing.events = on ? [...editing.events, ev] : editing.events.filter((x) => x !== ev); }
 </script>
 
-<PageHeader title="Webhooks" cli="cms webhooks">
+<PageHeader title="Webhooks" cli="librepublish list_webhooks">
   {#snippet actions()}{#if session.can("webhooks:write")}<Button icon="add" onclick={() => edit(null)}>New webhook</Button>{/if}{/snippet}
 </PageHeader>
 {#if list}

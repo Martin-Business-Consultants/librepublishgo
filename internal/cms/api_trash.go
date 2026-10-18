@@ -54,7 +54,7 @@ func (a *App) listTrash(c *Ctx) error {
 	}
 	c.Summary = fmt.Sprintf("%d in the trash.", len(out))
 	if len(out) > 0 {
-		c.Crumbs = []Crumb{crumb("Restore one", fmt.Sprintf("cms restore %s %v", out[0].Get("kind"), out[0].Get("id")))}
+		c.Crumbs = []Crumb{step("Restore one", "restore_from_trash", "kind", out[0].Get("kind"), "id", out[0].Get("id"))}
 	}
 	return c.JSON(200, O("entries", out, "counts", counts, "kinds", trashKinds))
 }

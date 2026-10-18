@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/admin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/cli"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/cms"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/datalock"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
@@ -65,7 +66,9 @@ func main() {
 	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "librepublish:", err)
+	if !errors.Is(err, cli.ErrFailed) { // a tool's failure is already printed
+		fmt.Fprintln(os.Stderr, "librepublish:", err)
+	}
 	os.Exit(exitCode(err))
 }
 
@@ -74,6 +77,8 @@ func exitCode(err error) int {
 	switch {
 	case errors.As(err, &usage):
 		return 2
+	case errors.Is(err, cli.ErrFailed):
+		return 3
 	case errors.Is(err, datalock.ErrLocked):
 		return exitTempFail
 	case errors.Is(err, restore.ErrInvalid), errors.Is(err, restore.ErrTooLarge), errors.Is(err, restore.ErrWrongKey):
@@ -107,12 +112,28 @@ func run(ctx context.Context, stop func(), args []string) error {
 		usage(os.Stdout)
 		return nil
 	}
-	usage(os.Stderr)
-	return usagef("unknown command %q", cmd)
+	// Working on a site: login and kin, or one of its tools by name.
+	err := cli.Run(ctx, cli.Env{Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Version: version}, cmd, args)
+	if errors.Is(err, cli.ErrUnknown) {
+		return usageError{fmt.Errorf("%w (librepublish help lists the commands)", err)}
+	}
+	return err
 }
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `librepublish: a headless CMS in one file.
+	fmt.Fprint(w, `librepublish: a headless CMS in one file. It runs the site, and works on one.
+
+Working on a site (from a terminal, a script, or an AI app):
+
+  login        sign in to a site            https://cms.example.com [--name NAME] [--token TOKEN]
+  TOOL         run one of the site's tools  e.g. list_pages --status draft, get_page about
+  tools        what the site's tools are    [NAME] [--json]
+  whoami       the site, you and your role
+  doctor       whether all that works
+  mcp          a local MCP server for AI apps; mcp setup says how to add it
+  profiles, logout                          --profile NAME picks a site; --json prints answers raw
+
+Running a site:
 
   serve        run it (the default)         --data DIR --addr :8080 --url https://cms.example.com
   user create  add a person                 --email --name --password [--role Administrator]

@@ -32,7 +32,7 @@ func (a *App) listCollections(c *Ctx) error {
 	}
 	c.Summary = fmt.Sprintf("%d %s.", len(out), plural(len(out), "collection"))
 	if len(list) > 0 {
-		c.Crumbs = []Crumb{crumb("Its entries", "cms entries "+list[0].Slug)}
+		c.Crumbs = []Crumb{step("Its entries", "list_entries", "slug", list[0].Slug)}
 	}
 	return c.JSON(200, O("collections", out))
 }
@@ -79,7 +79,7 @@ func (a *App) createCollection(c *Ctx) error {
 	if err := a.saveCollection(c.R.Context(), c.Actor, col, p); err != nil {
 		return err
 	}
-	c.Crumbs = []Crumb{crumb("Add an entry", fmt.Sprintf(`cms post /collections/%s/entries '{"entry":{"slug":"…","title":"…"}}'`, col.Slug))}
+	c.Crumbs = []Crumb{step("Add an entry", "create_entry", "slug", col.Slug, "entry", O("slug", "…", "title", "…"))}
 	return c.JSON(201, O("collection", a.collectionJSON(c.R.Context(), col)))
 }
 
@@ -102,7 +102,7 @@ func (a *App) updateCollection(c *Ctx) error {
 }
 
 // schemaBody reads a schema write: {"fields": […]}, {"schema": …}, or a
-// bare list (what `cms schema collection posts < fields.json` sends).
+// bare list (what update_collection_schema sends).
 func schemaBody(c *Ctx, wrapper string) (any, error) {
 	var body any
 	if err := c.Body(&body); err != nil {
@@ -221,7 +221,7 @@ func (a *App) renderGlobal(c *Ctx, status int, g *Global) error {
 		body = body.Set("assets", a.resolveAssets(ctx, a.assetIDs(ctx, "Global", []int64{g.ID})))
 	}
 	c.Summary = g.Name + " (" + g.Slug + ")."
-	c.Crumbs = []Crumb{crumb("Edit it", fmt.Sprintf(`cms patch /globals/%s '{"global":{"data":{…}}}'`, g.Slug))}
+	c.Crumbs = []Crumb{step("Edit it", "update_global", "slug", g.Slug, "global", O("data", O()))}
 	return c.JSON(status, body)
 }
 
@@ -345,7 +345,7 @@ func (a *App) listBlockTypes(c *Ctx) error {
 	}
 	c.Summary = fmt.Sprintf("%d block %s.", len(out), plural(len(out), "type"))
 	if len(out) == 0 {
-		c.Crumbs = []Crumb{crumb("Install the starter pack", "cms seed-blocks")}
+		c.Crumbs = []Crumb{step("Install the starter pack", "api_request", "method", "POST", "path", "/api/block_types/seed")}
 	}
 	return c.JSON(200, O("block_types", out))
 }

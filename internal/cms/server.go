@@ -94,6 +94,9 @@ type App struct {
 	// before it's written (events.go).
 	listeners     []listener
 	beforeSetting map[string]func(data map[string]any)
+	// The routes, and the agent tools declared on them (agent.go).
+	mux   *http.ServeMux
+	tools []*toolSpec
 	// Settings › General's CMS address (cms_url), kept here for BaseURL.
 	cmsURL atomic.Pointer[string]
 	// The newest release, when it's newer than this build (UpdateCheck).
@@ -342,12 +345,47 @@ type Ctx struct {
 
 // Crumb is a next step an agent's answer suggests: what it does, and the
 // CLI command for it.
+// Crumb is a next step an answer suggests: a tool and its arguments, filled
+// in from what was just returned (what an MCP client calls), and the same
+// as a command line (what a person types).
 type Crumb struct {
-	Description string `json:"description"`
-	Command     string `json:"command"`
+	Description string         `json:"description"`
+	Command     string         `json:"command"`
+	Tool        string         `json:"tool,omitempty"`
+	Arguments   map[string]any `json:"arguments,omitempty"`
 }
 
-func crumb(desc, cmd string) Crumb { return Crumb{desc, cmd} }
+// crumb is a next step that isn't a tool call (a URL to pass on).
+func crumb(desc, cmd string) Crumb { return Crumb{Description: desc, Command: cmd} }
+
+// step is a next step that's a tool call: tool, then its arguments as
+// name, value pairs.
+func step(desc, tool string, args ...any) Crumb {
+	c := Crumb{Description: desc, Tool: tool}
+	line := []string{"librepublish", tool}
+	if len(args) > 0 {
+		c.Arguments = map[string]any{}
+	}
+	for i := 0; i+1 < len(args); i += 2 {
+		name := fmt.Sprint(args[i])
+		c.Arguments[name] = args[i+1]
+		v := args[i+1]
+		var s string
+		switch x := v.(type) {
+		case string:
+			s = x
+		default:
+			raw, _ := json.Marshal(x)
+			s = string(raw)
+		}
+		if strings.ContainsAny(s, " '\"{}[]$`&|;<>*?") {
+			s = "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+		line = append(line, "--"+strings.ReplaceAll(name, "_", "-"), s)
+	}
+	c.Command = strings.Join(line, " ")
+	return c
+}
 
 type handlerFunc func(*Ctx) error
 
@@ -573,13 +611,17 @@ func (c *Ctx) ip() string {
 // ---- routing -------------------------------------------------------------
 
 type route struct {
-	auth bool // false: open to anyone (device login, public posts)
+	auth bool      // false: open to anyone (device login, public posts)
+	tool *toolSpec // the agent tool this route is (agent.go)
 }
 
 func (a *App) handle(mux *http.ServeMux, pattern string, h handlerFunc, opts ...func(*route)) {
 	rt := route{auth: true}
 	for _, o := range opts {
 		o(&rt)
+	}
+	if rt.tool != nil {
+		a.register(pattern, rt.tool)
 	}
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		c := &Ctx{App: a, W: w, R: r}
@@ -615,7 +657,10 @@ func open(r *route) { r.auth = false }
 // Handler is the whole install: the API, the admin, the files.
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	a.mux, a.tools = mux, nil
 	a.routes(mux)
+	a.deriveTools()
+	mux.HandleFunc("/mcp", a.mcp)
 	a.deliveryRoutes(mux)
 
 	mux.HandleFunc("GET /files/{key}/{rest...}", a.serveFile)

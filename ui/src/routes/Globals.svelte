@@ -12,7 +12,7 @@
   get("/globals").then((r) => (list = r.globals));
 </script>
 
-<PageHeader title="Globals" cli="cms globals">
+<PageHeader title="Globals" cli="librepublish list_globals">
   {#snippet actions()}{#if session.can("globals:write")}<Button icon="add" href="#/globals/new">New global</Button>{/if}{/snippet}
 </PageHeader>
 {#if list}

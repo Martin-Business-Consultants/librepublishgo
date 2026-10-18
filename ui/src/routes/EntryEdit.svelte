@@ -97,7 +97,7 @@
 {#if !entry}
   <div class="flex justify-center py-16"><Spinner /></div>
 {:else}
-  <EditorTabs bind:tab cli={slug ? `cms entry ${colSlug} ${slug}` : ""} seoWarning={!entry.seo?.meta_description}>
+  <EditorTabs bind:tab cli={slug ? `librepublish get_entry --slug ${colSlug} --entry ${slug}` : ""} seoWarning={!entry.seo?.meta_description}>
     {#snippet actions()}
       {#if dirty}<span class="text-xs font-medium text-amber-700 dark:text-amber-400">Unsaved changes · ⌘S{#if editing?.autosavedAt} · autosaved{/if}</span>{/if}
       <Button href="#/collections/{colSlug}">All {col.name.toLowerCase()}</Button>

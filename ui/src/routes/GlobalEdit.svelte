@@ -63,7 +63,7 @@
 {#if !g}
   <div class="flex justify-center py-16"><Spinner /></div>
 {:else}
-  <PageHeader title={slug ? g.name : "New global"} icon="world" cli={slug ? `cms get /globals/${slug}` : ""}>
+  <PageHeader title={slug ? g.name : "New global"} icon="world" cli={slug ? `librepublish get_global --slug ${slug}` : ""}>
     {#snippet actions()}
       {#if slug && session.can("globals:write")}<Button icon="sliders" onclick={() => { draft = JSON.parse(JSON.stringify(fields)); editingFields = true; }}>Edit fields</Button>{/if}
       {#if slug}<Button variant="primary" loading={saving} onclick={() => submit(false)}>{session.can("globals:publish") ? "Update" : "Propose changes"}</Button>{/if}

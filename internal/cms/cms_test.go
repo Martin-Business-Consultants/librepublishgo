@@ -264,7 +264,8 @@ func TestAgentEnvelope(t *testing.T) {
 	if r.Body["status"] != "ok" || r.Body["summary"] != "1 page." || dig(r.Body, "data", "pages", 0, "path") != "home" {
 		t.Fatalf("envelope: %s", r.Raw)
 	}
-	if dig(r.Body, "breadcrumbs", 0, "command") != "cms page home" {
+	if dig(r.Body, "breadcrumbs", 0, "command") != "librepublish get_page --path home" || dig(r.Body, "breadcrumbs", 0, "tool") != "get_page" ||
+		dig(r.Body, "breadcrumbs", 0, "arguments", "path") != "home" {
 		t.Fatalf("breadcrumbs name a real page: %s", r.Raw)
 	}
 	r = s.must(404, s.do(s.admin, "GET", "/api/pages/nope?envelope=1", nil))

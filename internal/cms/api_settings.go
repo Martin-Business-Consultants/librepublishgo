@@ -52,7 +52,7 @@ func (a *App) showSetting(c *Ctx) error {
 	}
 	key := c.Param("key")
 	// The frontend's repo lives under settings/github; reading an unset
-	// key is {} rather than a 404, so `cms get /settings/github` answers.
+	// key is {} rather than a 404, so `librepublish get_setting --key github` answers.
 	o, err := a.settingJSON(c.R.Context(), key)
 	if err != nil {
 		if e, ok := errors.AsType[*apierr.Error](err); ok && e.Status == 404 {

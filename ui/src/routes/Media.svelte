@@ -67,7 +67,7 @@
 
 <svelte:window ondragover={(e) => { if (e.dataTransfer?.types.includes("Files")) { e.preventDefault(); dragging = true; } }} ondragleave={(e) => { if (!e.relatedTarget) dragging = false; }} ondrop={(e) => { e.preventDefault(); dragging = false; if (e.dataTransfer.files.length) upload([...e.dataTransfer.files]); }} />
 
-<PageHeader title="Media" cli="cms assets{filter === 'unused' ? ' --unused' : ''}">
+<PageHeader title="Media" cli="librepublish list_assets">
   {#snippet actions()}
     {#if session.can("assets:write")}
       <input type="file" multiple class="hidden" bind:this={fileInput} onchange={(e) => { upload([...e.currentTarget.files]); e.currentTarget.value = ""; }} />

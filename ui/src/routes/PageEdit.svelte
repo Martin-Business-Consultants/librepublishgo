@@ -120,7 +120,7 @@
 {#if !page}
   <div class="flex justify-center py-16"><Spinner /></div>
 {:else}
-  <EditorTabs bind:tab cli={path ? `cms page ${path}` : ""} seoWarning={!page.seo?.meta_description}>
+  <EditorTabs bind:tab cli={path ? `librepublish get_page --path ${path}` : ""} seoWarning={!page.seo?.meta_description}>
     {#snippet actions()}
       {#if dirty}<span class="text-xs font-medium text-amber-700 dark:text-amber-400">Unsaved changes · ⌘S{#if editing?.autosavedAt} · autosaved{/if}</span>{/if}
       {#if path && session.can("pages:write")}

@@ -27,7 +27,7 @@
   const names = { page: "Pages", entry: "Entries", global: "Globals", asset: "Media" };
 </script>
 
-<PageHeader title="Trash" cli="cms trash" />
+<PageHeader title="Trash" cli="librepublish list_trash" />
 {#if data}
   <StatusLinks param="kind" options={[{ label: "All", value: "", count: data.entries.length }, ...Object.keys(names).filter((k) => counts[k]).map((k) => ({ label: names[k], value: k, count: counts[k] }))]} />
   <DataTable {rows} key="key" columns={[{ label: "Item" }, { label: "Kind" }, { label: "Trashed" }]}>

@@ -31,7 +31,7 @@
   }
 </script>
 
-<PageHeader title="Block types" cli="cms get /block_types">
+<PageHeader title="Block types" cli="librepublish list_block_types">
   {#snippet actions()}
     {#if session.can("block_types:write")}
       <Button loading={seeding} onclick={seed}>Install starter pack</Button>

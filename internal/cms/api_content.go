@@ -17,60 +17,60 @@ import (
 func (a *App) routes(mux *http.ServeMux) {
 	h := func(pattern string, fn handlerFunc, opts ...func(*route)) { a.handle(mux, pattern, fn, opts...) }
 
-	h("GET /api/manifest", a.getManifest)
+	h("GET /api/manifest", a.getManifest, tool("get_manifest", "Start here: the site, your role and what it can do, its collections, block types and globals."))
 	h("GET /api/api_tokens/me", a.getMe)
 	h("POST /api/api_tokens/rotate", a.rotateMyToken)
 
-	h("GET /api/pages", a.listPages)
-	h("POST /api/pages", a.createPage)
+	h("GET /api/pages", a.listPages, tool("list_pages", "List pages: path, title, status.", query("q", "string", "Words in the title."), query("status", "string", "draft or published."), query("locale", "string", "Only this locale's."), query("page", "integer", "Page of results (from 1)."), query("per", "integer", "Results per page.")))
+	h("POST /api/pages", a.createPage, tool("create_page", "Make a page (a draft unless status says otherwise).", body("page", `The page's fields: title, slug, parent_id, status (draft, published), blocks ([{type, data}]), frontmatter, seo, publish_at. Rich text is the editor's document (Tiptap JSON).`, true)))
 	h("POST /api/pages/bulk_destroy", a.bulkDestroy("page"))
 	h("POST /api/pages/bulk_update_status", a.bulkStatus("page"))
-	h("GET /api/pages/{path...}", a.showPage)
-	h("PATCH /api/pages/{path...}", a.updatePage)
+	h("GET /api/pages/{path...}", a.showPage, tool("get_page", "One page, its blocks expanded, with the lock_version to save against."))
+	h("PATCH /api/pages/{path...}", a.updatePage, tool("update_page", "Change a page: only the fields sent change. blocks, when sent, replace the page's blocks.", body("page", `The page's fields: title, slug, parent_id, status (draft, published), blocks ([{type, data}]), frontmatter, seo, publish_at. Rich text is the editor's document (Tiptap JSON).`, true), note("Send lock_version from the read this is based on: a 409 means someone saved since; read again, then save.")))
 	h("PUT /api/pages/{path...}", a.updatePage)
-	h("DELETE /api/pages/{path...}", a.destroyPage)
+	h("DELETE /api/pages/{path...}", a.destroyPage, tool("delete_page", "Move a page (and the pages under it) to the trash.", note("restore_from_trash brings it back.")))
 
-	h("GET /api/collections", a.listCollections)
-	h("POST /api/collections", a.createCollection)
+	h("GET /api/collections", a.listCollections, tool("list_collections", "List collections: their slugs, names and entry counts."))
+	h("POST /api/collections", a.createCollection, tool("create_collection", "Make a collection.", body("collection", "slug, name, enable_blocks, and schema: {fields: [{name, label, type, …}]}.", true)))
 	h("POST /api/collections/bulk_destroy", a.bulkDestroyCollections)
-	h("GET /api/collections/{slug}", a.showCollection)
+	h("GET /api/collections/{slug}", a.showCollection, tool("get_collection", "One collection, with its fields (schema)."))
 	h("PATCH /api/collections/{slug}", a.updateCollection)
 	h("PUT /api/collections/{slug}", a.updateCollection)
 	h("DELETE /api/collections/{slug}", a.destroyCollection)
-	h("PATCH /api/collections/{slug}/schema", a.updateCollectionSchema)
-	h("GET /api/collections/{slug}/entries", a.listEntries)
-	h("POST /api/collections/{slug}/entries", a.createEntry)
+	h("PATCH /api/collections/{slug}/schema", a.updateCollectionSchema, tool("update_collection_schema", "Set a collection's fields.", bodyList("fields", "The whole field list: [{name, label, type, required, help, of}]. Types: string, text, richtext, code, integer, boolean, select, url, datetime, link, asset, record_ref, record_refs, repeater, group, blocks, string_list."), note("REPLACES the field list: send every field, not just the new one.")))
+	h("GET /api/collections/{slug}/entries", a.listEntries, tool("list_entries", "List a collection's entries.", query("q", "string", "Words in the title."), query("status", "string", "draft or published."), query("locale", "string", "Only this locale's."), query("page", "integer", "Page of results (from 1)."), query("per", "integer", "Results per page.")))
+	h("POST /api/collections/{slug}/entries", a.createEntry, tool("create_entry", "Make an entry in a collection (a draft unless status says otherwise).", body("entry", `The entry's fields: title, slug, status (draft, published), frontmatter (the collection's fields), blocks, body_markdown, seo, publish_at. Rich text is the editor's document (Tiptap JSON).`, true)))
 	h("POST /api/collections/{slug}/entries/bulk_destroy", a.bulkDestroy("entry"))
 	h("POST /api/collections/{slug}/entries/bulk_update_status", a.bulkStatus("entry"))
-	h("GET /api/collections/{slug}/entries/{entry}", a.showEntry)
-	h("PATCH /api/collections/{slug}/entries/{entry}", a.updateEntry)
+	h("GET /api/collections/{slug}/entries/{entry}", a.showEntry, tool("get_entry", "One entry, with the lock_version to save against."))
+	h("PATCH /api/collections/{slug}/entries/{entry}", a.updateEntry, tool("update_entry", "Change an entry: only the fields sent change.", body("entry", `The entry's fields: title, slug, status (draft, published), frontmatter (the collection's fields), blocks, body_markdown, seo, publish_at. Rich text is the editor's document (Tiptap JSON).`, true), note("Send lock_version from the read this is based on: a 409 means someone saved since; read again, then save.")))
 	h("PUT /api/collections/{slug}/entries/{entry}", a.updateEntry)
-	h("DELETE /api/collections/{slug}/entries/{entry}", a.destroyEntry)
+	h("DELETE /api/collections/{slug}/entries/{entry}", a.destroyEntry, tool("delete_entry", "Move an entry to the trash."))
 	h("PATCH /api/collections/{slug}/entries/{entry}/toggle_field", a.entryField(true))
 	h("PATCH /api/collections/{slug}/entries/{entry}/update_field", a.entryField(false))
 
-	h("GET /api/globals", a.listGlobals)
+	h("GET /api/globals", a.listGlobals, tool("list_globals", "List globals: the site-wide content (navigation, footer, …)."))
 	h("POST /api/globals", a.createGlobal)
 	h("POST /api/globals/bulk_destroy", a.bulkDestroyGlobals)
-	h("GET /api/globals/{slug}", a.showGlobal)
-	h("PATCH /api/globals/{slug}", a.updateGlobal)
+	h("GET /api/globals/{slug}", a.showGlobal, tool("get_global", "One global: its fields and data, with the lock_version to save against."))
+	h("PATCH /api/globals/{slug}", a.updateGlobal, tool("update_global", "Change a global's data.", body("global", "{data: {…the global's fields…}}.", true), note("Send lock_version from the read this is based on: a 409 means someone saved since; read again, then save.")))
 	h("PUT /api/globals/{slug}", a.updateGlobal)
 	h("DELETE /api/globals/{slug}", a.destroyGlobal)
 	h("PATCH /api/globals/{slug}/schema", a.updateGlobalSchema)
 
-	h("GET /api/block_types", a.listBlockTypes)
-	h("POST /api/block_types", a.createBlockType)
+	h("GET /api/block_types", a.listBlockTypes, tool("list_block_types", "List block types: what pages and entries are built from, with their fields."))
+	h("POST /api/block_types", a.createBlockType, tool("create_block_type", "Make a block type.", body("block_type", "slug, label, category, description, fields: [{name, label, type, …}].", true)))
 	h("POST /api/block_types/bulk_destroy", a.bulkDestroyBlockTypes)
 	h("POST /api/block_types/seed", a.seedBlockTypes)
-	h("GET /api/block_types/{slug}", a.showBlockType)
-	h("PATCH /api/block_types/{slug}", a.updateBlockType)
+	h("GET /api/block_types/{slug}", a.showBlockType, tool("get_block_type", "One block type and its fields."))
+	h("PATCH /api/block_types/{slug}", a.updateBlockType, tool("update_block_type", "Change a block type.", body("block_type", "label, description, fields (the whole list).", true), note("fields REPLACES the list: send every field.")))
 	h("PUT /api/block_types/{slug}", a.updateBlockType)
 	h("DELETE /api/block_types/{slug}", a.destroyBlockType)
 
-	h("GET /api/revisions", a.listRevisions)
-	h("GET /api/revisions/{id}", a.showRevision)
-	h("POST /api/revisions/{id}/approve", a.decideRevision(true))
-	h("POST /api/revisions/{id}/reject", a.decideRevision(false))
+	h("GET /api/revisions", a.listRevisions, tool("list_revisions", "Changes waiting for review."))
+	h("GET /api/revisions/{id}", a.showRevision, tool("get_revision", "One change waiting for review: what it would change."))
+	h("POST /api/revisions/{id}/approve", a.decideRevision(true), tool("approve_revision", "Approve a change, which applies it."))
+	h("POST /api/revisions/{id}/reject", a.decideRevision(false), tool("reject_revision", "Reject a change."))
 
 	a.mediaRoutes(h)
 	a.adminRoutes(h)
@@ -138,7 +138,7 @@ func (a *App) listPages(c *Ctx) error {
 	if len(list) > 0 {
 		first = list[0].Path
 	}
-	c.Crumbs = []Crumb{crumb("Open one, blocks expanded", "cms page "+first), crumb("Only drafts", "cms pages --status draft"), crumb("Publish one", "cms publish "+first)}
+	c.Crumbs = []Crumb{step("Open one, blocks expanded", "get_page", "path", first), step("Only drafts", "list_pages", "status", "draft"), step("Publish one", "publish_page", "path", first)}
 	return c.JSON(200, O("pages", out, "page", page, "per", per, "total", total))
 }
 
@@ -185,10 +185,10 @@ func (a *App) renderPage(c *Ctx, status int, p *Content) error {
 	}
 	c.Summary = fmt.Sprintf("%s (%s) — %s.", p.Title, p.Path, p.Status)
 	c.Crumbs = []Crumb{
-		crumb("See it back", "cms page "+p.Path),
-		crumb("Edit it", fmt.Sprintf(`cms patch /pages/%s '{"page":{"title":"…"}}'`, p.Path)),
-		crumb("Publish it", "cms publish "+p.Path),
-		crumb("What links here, before deleting it", "cms refs page "+p.Path),
+		step("See it back", "get_page", "path", p.Path),
+		step("Edit it", "update_page", "path", p.Path, "page", O("title", "…")),
+		step("Publish it", "publish_page", "path", p.Path),
+		step("What links here, before deleting it", "api_request", "method", "GET", "path", "/api/references", "query", O("type", "page", "id", p.Path)),
 	}
 	return c.JSON(status, body)
 }
@@ -496,7 +496,7 @@ func (a *App) listEntries(c *Ctx) error {
 	if len(list) > 0 {
 		first = list[0].Slug
 	}
-	c.Crumbs = []Crumb{crumb("Open one", fmt.Sprintf("cms entry %s %s", col.Slug, first)), crumb("Only published", fmt.Sprintf("cms entries %s --status published", col.Slug))}
+	c.Crumbs = []Crumb{step("Open one", "get_entry", "slug", col.Slug, "entry", first), step("Only published", "list_entries", "slug", col.Slug, "status", "published")}
 	return c.JSON(200, body)
 }
 
@@ -532,8 +532,8 @@ func (a *App) renderEntry(c *Ctx, status int, e *Content) error {
 	}
 	c.Summary = fmt.Sprintf("%s (%s/%s) — %s.", e.Title, e.CollectionSlug, e.Slug, e.Status)
 	c.Crumbs = []Crumb{
-		crumb("See it back", fmt.Sprintf("cms entry %s %s", e.CollectionSlug, e.Slug)),
-		crumb("Publish it", fmt.Sprintf("cms entry-status %s published %s", e.CollectionSlug, e.Slug)),
+		step("See it back", "get_entry", "slug", e.CollectionSlug, "entry", e.Slug),
+		step("Publish it", "publish_entry", "slug", e.CollectionSlug, "entry", e.Slug),
 	}
 	return c.JSON(status, body)
 }

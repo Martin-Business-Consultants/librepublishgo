@@ -49,7 +49,7 @@ func (a *App) deviceShow(c *Ctx) error {
 	err := a.store.QueryRowContext(c.R.Context(), `SELECT hostname, label, purpose, expires_at FROM device_authorizations WHERE user_code = ? AND approved_at IS NULL AND denied_at IS NULL`,
 		strings.ToUpper(c.Param("code"))).Scan(&host, &label, &purpose, &expires)
 	if err != nil || time.Now().After(expires.Time) {
-		return apierr.NotFound("That code has expired or was already used. Run `cms login` again.")
+		return apierr.NotFound("That code has expired or was already used. Run `librepublish login` again.")
 	}
 	return c.JSON(200, O("hostname", nullStr(host), "label", nullStr(label), "purpose", nullStr(purpose)))
 }
@@ -143,7 +143,7 @@ func (a *App) deviceToken(c *Ctx) error {
 		if name == "" {
 			name = "PRODUCTION"
 		}
-		_, plain, err := a.issueServiceToken(c.R.Context(), user, name, "Issued by `cms login` on "+host.String, role.ID)
+		_, plain, err := a.issueServiceToken(c.R.Context(), user, name, "Issued by `librepublish login` on "+host.String, role.ID)
 		if err != nil {
 			return err
 		}

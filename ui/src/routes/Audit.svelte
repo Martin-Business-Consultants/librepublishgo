@@ -16,7 +16,7 @@
   get("/audit_log?" + p).then((r) => (data = r));
 </script>
 
-<PageHeader title="Audit log" cli="cms audit" />
+<PageHeader title="Audit log" cli="librepublish list_audit_log" />
 <div class="flex flex-wrap items-center justify-between gap-2">
   <QuickFilter title="What" param="action" options={[{ label: "Everything", value: "" }, { label: "Pages", value: "page." }, { label: "Entries", value: "entry." }, { label: "Globals", value: "global." }, { label: "Reviews", value: "revision." }, { label: "Media", value: "asset." }, { label: "Settings", value: "setting." }, { label: "People & tokens", value: "user." }, { label: "Plugins", value: "plugin." }]} />
   <SearchBox placeholder="Who…" />

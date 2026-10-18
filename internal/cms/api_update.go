@@ -24,7 +24,7 @@ import (
 const keptBackups = 3
 
 func (a *App) updateRoutes(h func(string, handlerFunc, ...func(*route))) {
-	h("POST /api/tools/update", a.applyUpdate)
+	h("POST /api/tools/update", a.applyUpdate, tool("update_cms", "Update this CMS to the newest release: a backup first, then a restart on it (a few seconds offline). Administrators only.", note("It answers before restarting: wait, then get_manifest says the new version.")))
 }
 
 func (a *App) applyUpdate(c *Ctx) error {

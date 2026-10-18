@@ -14,7 +14,7 @@ import (
 )
 
 func (a *App) pluginRoutes(h func(string, handlerFunc, ...func(*route))) {
-	h("GET /api/plugins", a.listPlugins)
+	h("GET /api/plugins", a.listPlugins, tool("list_plugins", "List the installed plugins."))
 	h("POST /api/plugins", a.installPlugin)
 	h("GET /api/plugins/{key}", a.showPlugin)
 	h("GET /api/plugins/{key}/admin", a.pluginAdmin)

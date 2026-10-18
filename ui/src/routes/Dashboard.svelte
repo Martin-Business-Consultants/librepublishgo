@@ -71,7 +71,7 @@
   const recentTokens = $derived((data?.tokens || []).filter((t) => t.last_used_at && Date.now() - new Date(t.last_used_at) < 7 * 864e5));
 </script>
 
-<PageHeader title="Dashboard" cli="cms doctor" />
+<PageHeader title="Dashboard" cli="librepublish doctor" />
 
 {#if session.me?.update?.failed}
   {@const u = session.me.update}

@@ -1,5 +1,5 @@
 <script>
-  // `cms login` from a terminal: approve the code it shows.
+  // `librepublish login` from a terminal: approve the code it shows.
   import PageHeader from "../lib/components/PageHeader.svelte";
   import Panel from "../lib/components/Panel.svelte";
   import Input from "../lib/components/Input.svelte";
@@ -29,7 +29,7 @@
       <div class="flex gap-2"><Input bind:value={code} mono placeholder="ABCD-EFGH" class="max-w-48 text-center uppercase tracking-widest" onchange={look} /><Button onclick={look}>Look up</Button></div>
       {#if error}<Notice tone="danger">{error}</Notice>{/if}
       {#if info}
-        <Notice tone="info">A {info.purpose === "site" ? "site build" : "cms CLI"} on <strong class="font-semibold">{info.hostname || "a machine"}</strong> asks to act as you{info.purpose === "site" ? " and receive a read-only token for the site" : ""}.</Notice>
+        <Notice tone="info">{info.purpose === "site" ? "A site build" : "librepublish"} on <strong class="font-semibold">{info.hostname || "a machine"}</strong> asks to act as you{info.purpose === "site" ? " and receive a read-only token for the site" : ""}.</Notice>
         <div class="flex justify-end gap-2"><Button variant="danger" onclick={() => decide(false)}>Deny</Button><Button variant="primary" onclick={() => decide(true)}>Approve</Button></div>
       {/if}
     </div>

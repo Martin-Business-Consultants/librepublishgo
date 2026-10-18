@@ -11,7 +11,7 @@
   let withKey = $state(false);
 </script>
 
-<PageHeader title="Backup" cli="cms backup > backup.tar.gz" />
+<PageHeader title="Backup" cli="librepublish api_request --method GET --path /api/tools/backup > backup.tar.gz" />
 <div class="flex max-w-3xl flex-col gap-6">
   <Panel title="Download a backup">
     <div class="flex flex-col gap-4 p-6 text-sm text-foreground/80">

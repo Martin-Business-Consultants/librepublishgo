@@ -92,7 +92,7 @@
   const statusOptions = $derived([{ label: "All", value: "", count: counts[""] }, ...["published", "draft", "archived"].filter((s) => counts[s]).map((s) => ({ label: s[0].toUpperCase() + s.slice(1), value: s, count: counts[s] }))]);
 </script>
 
-<PageHeader title="Pages" cli="cms pages{status ? ' --status ' + status : ''}">
+<PageHeader title="Pages" cli="librepublish list_pages{status ? ' --status ' + status : ''}">
   {#snippet actions()}{#if session.can("pages:write")}<Button icon="add" href="#/pages/new">New page</Button>{/if}{/snippet}
 </PageHeader>
 

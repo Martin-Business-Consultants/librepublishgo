@@ -16,36 +16,36 @@ import (
 
 func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("GET /api/redirects", a.edgeRedirects)
-	h("GET /api/redirects/all", a.allRedirects)
+	h("GET /api/redirects/all", a.allRedirects, tool("list_redirects", "List redirects."))
 	h("GET /api/redirects/resolve", a.resolveRedirect)
 	h("GET /api/redirects/export", a.exportRedirects)
 	h("POST /api/redirects/import", a.importRedirects)
-	h("POST /api/redirects", a.createRedirect)
+	h("POST /api/redirects", a.createRedirect, tool("create_redirect", "Add a redirect.", body("redirect", "from_path, to_path, status_code (301 or 302).", true)))
 	h("PATCH /api/redirects/{id}", a.updateRedirect)
 	h("PUT /api/redirects/{id}", a.updateRedirect)
-	h("DELETE /api/redirects/{id}", a.destroyRedirect)
+	h("DELETE /api/redirects/{id}", a.destroyRedirect, tool("delete_redirect", "Remove a redirect."))
 
 	h("GET /api/settings", a.listSettings)
 	h("POST /api/settings", a.createSetting)
-	h("GET /api/settings/{key}", a.showSetting)
-	h("PATCH /api/settings/{key}", a.updateSetting)
+	h("GET /api/settings/{key}", a.showSetting, tool("get_setting", "One settings section: general, brand (the AI writing brief), branding, email, deploy, …."))
+	h("PATCH /api/settings/{key}", a.updateSetting, tool("update_setting", "Change a settings section: the keys sent merge into it.", body("setting", "{data: {…}}.", true)))
 	h("POST /api/settings/email/test", a.sendTestMail)
 	h("PUT /api/settings/{key}", a.updateSetting)
 	h("DELETE /api/settings/{key}", a.destroySetting)
 
-	h("GET /api/deploy", a.showDeploy)
+	h("GET /api/deploy", a.showDeploy, tool("get_deploy", "The site's deploy: the build hook, the last build and whether it worked."))
 	h("PATCH /api/deploy", a.updateDeploy)
-	h("POST /api/deploy/trigger", a.triggerDeploy)
+	h("POST /api/deploy/trigger", a.triggerDeploy, tool("trigger_deploy", "Rebuild the website now."))
 	h("GET /api/frontend", a.showFrontend)
 	h("POST /api/frontend/builds", a.reportBuild)
 
-	h("GET /api/audit_log", a.listAudit)
+	h("GET /api/audit_log", a.listAudit, tool("list_audit_log", "Who changed what, newest first."))
 
-	h("GET /api/trash", a.listTrash)
-	h("POST /api/trash/{kind}/{id}/restore", a.restoreTrash)
+	h("GET /api/trash", a.listTrash, tool("list_trash", "What's in the trash."))
+	h("POST /api/trash/{kind}/{id}/restore", a.restoreTrash, tool("restore_from_trash", "Bring something back from the trash.", note("kind is page, entry, global, asset or block_type.")))
 	h("DELETE /api/trash/{kind}/{id}", a.purgeTrash)
 
-	h("GET /api/webhooks", a.listWebhooks)
+	h("GET /api/webhooks", a.listWebhooks, tool("list_webhooks", "List webhooks."))
 	h("POST /api/webhooks", a.createWebhook)
 	h("GET /api/webhooks/{id}", a.showWebhook)
 	h("PATCH /api/webhooks/{id}", a.updateWebhook)
@@ -62,20 +62,20 @@ func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("POST /api/service_tokens/{id}/rotate", a.rotateServiceToken)
 	h("POST /api/service_tokens/{id}/revoke", a.revokeServiceToken)
 
-	h("GET /api/users", a.listUsers)
+	h("GET /api/users", a.listUsers, tool("list_users", "List the people who can sign in, and their roles."))
 	h("POST /api/users", a.createUser)
 	h("PATCH /api/users/{id}", a.updateUser)
 	h("DELETE /api/users/{id}", a.destroyUser)
-	h("GET /api/roles", a.listRoles)
+	h("GET /api/roles", a.listRoles, tool("list_roles", "List roles and their capabilities."))
 	h("POST /api/roles", a.createRole)
 	h("PATCH /api/roles/{id}", a.updateRole)
 	h("DELETE /api/roles/{id}", a.destroyRole)
 
 	h("POST /api/search", a.search)
-	h("GET /api/search", a.search)
+	h("GET /api/search", a.search, tool("search", "Search pages, entries, globals and media by words.", query("q", "string", "What to look for.")))
 	h("GET /api/references", a.references)
 	h("GET /api/sitemap", a.managementSitemap)
-	h("GET /api/site_health", a.siteHealth)
+	h("GET /api/site_health", a.siteHealth, tool("site_health", "What's wrong with the site, if anything: each check, passing or failing, and why."))
 	h("GET /api/tools/backup", a.backup)
 	a.importRoutes(h)
 	a.updateRoutes(h)
@@ -101,6 +101,7 @@ func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("GET /api/me/preferences", a.showPreferences)
 	h("PATCH /api/me/preferences", a.updatePreferences)
 	h("GET /api/site_health/info", a.siteHealthInfo)
+	h("GET /api/agent/tools", a.listTools)
 
 	a.pluginRoutes(h)
 }
@@ -131,7 +132,7 @@ func (a *App) getMe(c *Ctx) error {
 		body = append(body, kv{"user", O("id", c.Actor.UserID, "name", c.Actor.Name, "email", c.Actor.Email)})
 	}
 	c.Summary = fmt.Sprintf("%s, with %d capabilities.", c.Actor.Label(), len(caps))
-	c.Crumbs = []Crumb{crumb("The shape of this CMS", "cms manifest"), crumb("The house voice, before writing copy", "cms brand")}
+	c.Crumbs = []Crumb{step("The shape of this CMS", "get_manifest"), step("The house voice, before writing copy", "get_setting", "key", "brand")}
 	return c.JSON(200, body)
 }
 
@@ -243,7 +244,7 @@ func (a *App) getManifest(c *Ctx) error {
 		plugins = append(plugins, O("key", p.Key, "name", p.Name, "version", p.Version, "enabled", p.Enabled))
 	}
 	c.Summary = fmt.Sprintf("%d collections, %d block types, %d globals.", len(collections), len(blocks), len(globals))
-	c.Crumbs = []Crumb{crumb("Every page", "cms pages"), crumb("The house voice", "cms brand")}
+	c.Crumbs = []Crumb{step("Every page", "list_pages"), step("The house voice", "get_setting", "key", "brand")}
 	counts := O("pages", count(`SELECT count(*) FROM pages WHERE deleted_at IS NULL`), "collections", count(`SELECT count(*) FROM collections`),
 		"entries", count(`SELECT count(*) FROM collection_entries WHERE deleted_at IS NULL`), "block_types", count(`SELECT count(*) FROM block_types`),
 		"globals", count(`SELECT count(*) FROM globals WHERE deleted_at IS NULL`))

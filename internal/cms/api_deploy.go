@@ -38,7 +38,7 @@ func (a *App) showDeploy(c *Ctx) error {
 	} else {
 		c.Summary = "No deploy has run yet."
 	}
-	c.Crumbs = []Crumb{crumb("Rebuild now", "cms deploy now")}
+	c.Crumbs = []Crumb{step("Rebuild now", "trigger_deploy")}
 	return c.JSON(200, O("deploy", d))
 }
 
@@ -74,7 +74,7 @@ func (a *App) triggerDeploy(c *Ctx) error {
 		return &apierr.Error{Status: 502, Code: "deploy_failed", Message: err.Error(), Extra: map[string]any{"deploy": status}}
 	}
 	c.Summary = "Deploy " + str(status["status"]) + "."
-	c.Crumbs = []Crumb{crumb("Whether it worked", "cms deploy")}
+	c.Crumbs = []Crumb{step("Whether it worked", "get_deploy")}
 	return c.JSON(202, O("ok", true, "deploy", status))
 }
 
