@@ -1,0 +1,25 @@
+# Kamal's deploy config, which Hoster reads from the repository (and fills
+# in: servers, registry, builder, the domains). Each site is its own app or
+# environment: Hoster renames the service to that app's, and the volume with
+# it (librepublish-data becomes oldmill-data), so every site gets a volume
+# of its own. Set SITE_KEY (and, if you like, APP_URL) per site under
+# Variables. docs/going-live.html walks through it.
+service: librepublish
+image: librepublish
+
+proxy:
+  # The image listens on 80, where kamal-proxy sends traffic.
+  app_port: 80
+  healthcheck:
+    path: /up
+
+# Everything the site keeps: its database, uploads and secret key. The CMS
+# refuses to start without a persistent volume here.
+volumes:
+  - librepublish-data:/data
+
+env:
+  clear:
+    # kamal-proxy is in front: client addresses come from X-Forwarded-For.
+    TRUST_PROXY: "1"
+    LOG_FORMAT: json
