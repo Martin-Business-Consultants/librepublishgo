@@ -11,7 +11,9 @@ librepublish serve --data ./data
 ```
 
 That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no separate database, no
-restart to add a plugin. It idles at about 28 MB of memory. The script picks
+restart to add a plugin. It runs in about 40 MB of memory; a plugin in use
+adds its compiled code (the Forms plugin, about 45 MB) until it has been idle
+for ten minutes. The script picks
 the build for your machine from the latest release and checks it against the
 release's checksums. Without it, download `librepublish-<os>-<arch>` from
 [Releases](https://github.com/Martin-Business-Consultants/librepublishgo/releases)
@@ -52,6 +54,7 @@ builds every platform and publishes them with `checksums.txt`, which
 | | `CMS_DELIVERY_RATE_LIMIT` | Requests a minute per token on `/api/v1` (1200; `0` for none). |
 | | `TRUST_PROXY=1` | Behind Caddy, nginx or a load balancer: read the client's address from `X-Forwarded-For`. |
 | | `LOG_LEVEL` | `debug`, `info` (what `serve` logs by default), `warn` or `error`. |
+| | `PLUGIN_IDLE` | How long a plugin stays compiled without a call (`10m`); then its memory is let go, and its next call loads it back from `DATA_DIR/cache/plugins` in a tenth of a second. |
 | | `LOG_FORMAT` | `text` (the default) or `json`. Each request's line carries its `request_id`, which is also the `X-Request-ID` answered (a proxy's own is kept). |
 
 Put TLS in front of it (Caddy is one line: `cms.example.com { reverse_proxy :8080 }`).

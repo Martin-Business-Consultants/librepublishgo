@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -36,8 +38,9 @@ type Host struct {
 	spawn    Spawn
 	defaults fs.FS // the plugins the binary ships, *.wasm
 
-	loadMu sync.Mutex // one LoadAll at a time
-	mu     sync.RWMutex
+	loadMu    sync.Mutex // one LoadAll at a time
+	sweepOnce sync.Once  // the idle sweep, started by the first LoadAll
+	mu        sync.RWMutex
 	// plugins and caps are swapped whole by LoadAll, under mu.
 	plugins map[string]*Plugin
 	caps    []CapGroup
@@ -48,26 +51,21 @@ var keyFormat = regexp.MustCompile(`^[a-z][a-z0-9_]{1,40}$`)
 
 const callTimeout = 10 * time.Second
 
-// LoadAll compiles every enabled plugin; one that fails is left off and
-// logged, not fatal: a plugin can't break the site. The modules it
-// replaces are closed once the calls running on them finish.
+// LoadAll reads every plugin; each is compiled on its first call (module),
+// not here, and let go when it's idle (sweep). The modules it replaces are
+// closed once the calls running on them finish.
 func (h *Host) LoadAll(ctx context.Context) error {
 	h.loadMu.Lock()
 	defer h.loadMu.Unlock()
-	rows, err := h.db.QueryContext(ctx, `SELECT id, key, name, version, COALESCE(description, ''), manifest, granted, enabled, created_at, updated_at, wasm FROM plugins ORDER BY key`)
+	rows, err := h.db.QueryContext(ctx, `SELECT id, key, name, version, COALESCE(description, ''), manifest, granted, enabled, created_at, updated_at FROM plugins ORDER BY key`)
 	if err != nil {
 		return err
 	}
-	type loaded struct {
-		p    *Plugin
-		wasm []byte
-	}
-	all, err := store.ScanAll(rows, func(r *sql.Rows) (loaded, error) {
+	all, err := store.ScanAll(rows, func(r *sql.Rows) (*Plugin, error) {
 		p := &Plugin{}
 		var granted store.JSON
-		var wasm []byte
-		if err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Version, &p.Description, &p.RawManifest, &granted, &p.Enabled, &p.CreatedAt, &p.UpdatedAt, &wasm); err != nil {
-			return loaded{}, err
+		if err := r.Scan(&p.ID, &p.Key, &p.Name, &p.Version, &p.Description, &p.RawManifest, &granted, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
 		}
 		// An unreadable manifest or grants isn't "asks for nothing, granted
 		// nothing": the plugin is left off, and why is logged.
@@ -81,26 +79,18 @@ func (h *Host) LoadAll(ctx context.Context) error {
 				p.Enabled = false
 			}
 		}
-		return loaded{p, wasm}, nil
+		return p, nil
 	})
 	if err != nil {
 		return err
 	}
 	plugins := map[string]*Plugin{}
 	var groups []CapGroup
-	for _, l := range all {
-		if l.p.Enabled {
-			compiled, err := h.compile(ctx, l.p.Key, l.wasm, l.p.Granted)
-			if err != nil {
-				h.log.Warn("plugin failed to load; left off", "plugin", l.p.Key, "err", err)
-				l.p.Enabled = false
-			}
-			l.p.compiled = compiled
-		}
-		plugins[l.p.Key] = l.p
-		if l.p.Enabled && len(l.p.Manifest.Capabilities) > 0 {
-			g := CapGroup{Group: l.p.Name}
-			for _, c := range l.p.Manifest.Capabilities {
+	for _, p := range all {
+		plugins[p.Key] = p
+		if p.Enabled && len(p.Manifest.Capabilities) > 0 {
+			g := CapGroup{Group: p.Name}
+			for _, c := range p.Manifest.Capabilities {
 				g.Caps = append(g.Caps, c.Key)
 				g.Labels = append(g.Labels, c.Label)
 			}
@@ -112,7 +102,89 @@ func (h *Host) LoadAll(ctx context.Context) error {
 	h.plugins, h.caps = plugins, groups
 	h.mu.Unlock()
 	h.retire(old)
+	h.sweepOnce.Do(func() { h.spawn(context.Background(), "plugin sweep", h.sweep) })
 	return nil
+}
+
+// IdleUnload is how long a plugin's compiled module is kept without a
+// call. Compiling it again comes from the disk cache (CompilationCache),
+// about a tenth of a second.
+var IdleUnload = 10 * time.Minute
+
+// module is p's compiled module, compiled now if it isn't (from the disk
+// cache when it's there), with this call counted until release.
+func (h *Host) module(ctx context.Context, p *Plugin) (*extism.CompiledPlugin, error) {
+	p.mod.Lock()
+	defer p.mod.Unlock()
+	if p.compiled == nil {
+		var wasm []byte
+		if err := h.db.QueryRowContext(ctx, `SELECT wasm FROM plugins WHERE id = ?`, p.ID).Scan(&wasm); err != nil {
+			return nil, fmt.Errorf("plugin %s: %w", p.Key, err)
+		}
+		cache := compilationCache()
+		compiled, err := h.compile(ctx, p.Key, wasm, p.Granted, cache)
+		if err != nil {
+			closeCache(ctx, cache)
+			h.log.Warn("plugin failed to load", "plugin", p.Key, "err", err)
+			return nil, fmt.Errorf("plugin %s failed to load: %w", p.Key, err)
+		}
+		p.compiled, p.cache = compiled, cache
+	}
+	p.active++
+	p.lastUsed = time.Now()
+	return p.compiled, nil
+}
+
+func (p *Plugin) release() {
+	p.mod.Lock()
+	p.active--
+	p.lastUsed = time.Now()
+	p.mod.Unlock()
+}
+
+// sweep lets go of the modules idle for IdleUnload, every minute, until
+// the app closes.
+func (h *Host) sweep(ctx context.Context) {
+	tick := time.NewTicker(min(time.Minute, IdleUnload))
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		h.UnloadIdle(context.WithoutCancel(ctx), IdleUnload)
+	}
+}
+
+// UnloadIdle lets go of the modules without a call for idle (and none
+// running): the keys it let go of.
+func (h *Host) UnloadIdle(ctx context.Context, idle time.Duration) []string {
+	var freed []string
+	for _, p := range h.List() {
+		p.mod.Lock()
+		if p.compiled != nil && p.active == 0 && time.Since(p.lastUsed) >= idle {
+			p.unload(ctx, h.log)
+			freed = append(freed, p.Key)
+		}
+		p.mod.Unlock()
+	}
+	if len(freed) > 0 {
+		debug.FreeOSMemory()
+		h.log.Info("plugins idle: let go of their compiled code", "plugins", freed, "idle", idle.String())
+	}
+	return freed
+}
+
+// Loaded is whether key's module is compiled now.
+func (h *Host) Loaded(key string) bool {
+	p := h.Get(key)
+	if p == nil {
+		return false
+	}
+	p.mod.Lock()
+	defer p.mod.Unlock()
+	return p.compiled != nil
 }
 
 // retire closes replaced modules once their calls finish, in the
@@ -134,10 +206,15 @@ func (h *Host) retire(old map[string]*Plugin) {
 func closePlugins(ctx context.Context, plugins map[string]*Plugin) error {
 	var errs []error
 	for _, p := range plugins {
+		p.calls.Wait()
+		p.mod.Lock()
 		if p.compiled != nil {
-			p.calls.Wait()
 			errs = append(errs, p.compiled.Close(ctx))
+			p.compiled = nil
 		}
+		closeCache(ctx, p.cache)
+		p.cache = nil
+		p.mod.Unlock()
 	}
 	return errors.Join(errs...)
 }
@@ -181,7 +258,7 @@ func (h *Host) Get(key string) *Plugin {
 
 // compile builds the module with exactly the host functions its grants
 // allow; what wasn't granted isn't there to call.
-func (h *Host) compile(ctx context.Context, key string, wasm []byte, grants Grants) (*extism.CompiledPlugin, error) {
+func (h *Host) compile(ctx context.Context, key string, wasm []byte, grants Grants, cache wazero.CompilationCache) (*extism.CompiledPlugin, error) {
 	manifest := extism.Manifest{
 		Wasm:         []extism.Wasm{extism.WasmData{Data: wasm, Name: key}},
 		AllowedHosts: grants.HTTP,
@@ -192,16 +269,65 @@ func (h *Host) compile(ctx context.Context, key string, wasm []byte, grants Gran
 		manifest.AllowedHosts = []string{}
 	}
 	cfg := extism.PluginConfig{EnableWasi: true}
-	if CompilationCache != nil {
-		cfg.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(CompilationCache)
+	if cache != nil {
+		cfg.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(cache)
 	}
 	return extism.NewCompiledPlugin(ctx, manifest, cfg, h.hostFunctions(key, grants))
 }
 
-// CompilationCache keeps compiled modules, when it's set (before any
-// plugin loads), for the next compile of the same bytes. The server leaves it
-// nil; tests, which compile the same few plugins over and over, share one.
+// CompilationCache is, when set, one cache every compile shares, kept for
+// the process's life: what tests use, compiling the same few plugins over
+// and over. A server keeps compiled modules on disk instead (UseDiskCache).
 var CompilationCache wazero.CompilationCache
+
+// cacheDir is where compiled modules are kept on disk (UseDiskCache): a
+// module let go when idle comes back from there in a tenth of a second
+// rather than seconds of compiling.
+var cacheDir string
+
+// UseDiskCache keeps compiled modules in dir (DATA_DIR/cache/plugins).
+func UseDiskCache(dir string) error {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	cacheDir = dir
+	return nil
+}
+
+// compilationCache is the cache one compile uses: the shared one when set,
+// else its own on the disk cache. Its own, because a wazero cache also
+// keeps every module it compiled in memory until it's closed: a module's
+// own cache is closed when the module is let go, and the native code with
+// it, where a shared one would hold every module ever loaded.
+func compilationCache() wazero.CompilationCache {
+	if CompilationCache != nil {
+		return CompilationCache
+	}
+	if cacheDir == "" {
+		return nil
+	}
+	cache, err := wazero.NewCompilationCacheWithDir(cacheDir)
+	if err != nil {
+		return nil
+	}
+	return cache
+}
+
+// closeCache closes a module's own cache (never the shared one).
+func closeCache(ctx context.Context, cache wazero.CompilationCache) {
+	if cache != nil && cache != CompilationCache {
+		_ = cache.Close(ctx)
+	}
+}
+
+// unload lets go of p's compiled module and its cache; p.mod is held.
+func (p *Plugin) unload(ctx context.Context, log *slog.Logger) {
+	if err := p.compiled.Close(ctx); err != nil {
+		log.Warn("plugin unload", "plugin", p.Key, "err", err)
+	}
+	closeCache(ctx, p.cache)
+	p.compiled, p.cache = nil, nil
+}
 
 // instanceConfig gives each call the real clock and real randomness
 // (wazero's defaults are fixed, for reproducible runs).
@@ -226,7 +352,12 @@ func (h *Host) Call(ctx context.Context, key, export string, input []byte) ([]by
 	defer p.calls.Done()
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
-	inst, err := p.compiled.Instance(ctx, instanceConfig())
+	compiled, err := h.module(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	defer p.release()
+	inst, err := compiled.Instance(ctx, instanceConfig())
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +381,7 @@ func (h *Host) acquire(key string) *Plugin {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	p := h.plugins[key]
-	if p == nil || !p.Enabled || p.compiled == nil {
+	if p == nil || !p.Enabled {
 		return nil
 	}
 	p.calls.Add(1)
@@ -277,7 +408,7 @@ func (h *Host) Emit(ctx context.Context, event string, data any) {
 // sandbox with nothing granted) and stores it, off until a person grants
 // what it asks for and enables it.
 func (h *Host) Install(ctx context.Context, actor Actor, wasm []byte) (*Plugin, error) {
-	probe, err := h.compile(ctx, "probe", wasm, Grants{})
+	probe, err := h.compile(ctx, "probe", wasm, Grants{}, nil)
 	if err != nil {
 		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "That isn't a WebAssembly plugin this CMS can load: " + err.Error()}
 	}

@@ -333,3 +333,28 @@ func TestFormsPlugin(t *testing.T) {
 	s.app.plugins.EnsureDefaults(t.Context())
 	s.must(404, s.do(s.admin, "GET", "/api/plugins/forms", nil))
 }
+
+// A plugin is compiled on its first call, not at start, and let go when
+// idle; the next call compiles it again (from the disk cache) and works.
+func TestPluginLoadsWhenUsed(t *testing.T) {
+	t.Parallel()
+	s := newSiteWith(t, Config{}) // with the plugins the binary ships
+	app := s.server.App()
+	if app.plugins.Loaded("forms") {
+		t.Fatal("compiled at start")
+	}
+	s.must(200, s.do(s.admin, "GET", "/api/x/forms/forms", nil))
+	if !app.plugins.Loaded("forms") {
+		t.Fatal("not compiled after a call")
+	}
+	if freed := app.plugins.UnloadIdle(t.Context(), time.Hour); len(freed) != 0 {
+		t.Fatalf("let go of a plugin used just now: %v", freed)
+	}
+	if freed := app.plugins.UnloadIdle(t.Context(), 0); len(freed) != 1 || freed[0] != "forms" || app.plugins.Loaded("forms") {
+		t.Fatalf("idle: let go of %v", freed)
+	}
+	s.must(200, s.do(s.admin, "GET", "/api/x/forms/forms", nil))
+	if !app.plugins.Loaded("forms") {
+		t.Fatal("not compiled again")
+	}
+}

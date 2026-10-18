@@ -168,6 +168,11 @@ func NewApp(cfg Config) (*App, error) {
 	}
 	a.hooks = webhook.New(db, secrets, a.log, a.tenant(), a.spawn)
 	a.deploys = deploy.New(deploySettings{a}, a.log, a.spawn)
+	// Compiled plugins are kept on disk, so one let go when idle comes back
+	// in a tenth of a second (and a restart doesn't compile them afresh).
+	if err := plugin.UseDiskCache(filepath.Join(cfg.DataDir, "cache", "plugins")); err != nil {
+		a.log.Warn("plugin cache", "err", err)
+	}
 	a.plugins = plugin.New(pluginEnv{a}, db, a.log, a.spawn, defaultPlugins())
 	a.listen()
 	if err := a.seed(); err != nil {

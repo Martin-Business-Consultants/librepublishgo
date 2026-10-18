@@ -28,8 +28,10 @@ import (
 	"net/http"
 	"regexp"
 	"sync"
+	"time"
 
 	extism "github.com/extism/go-sdk"
+	"github.com/tetratelabs/wazero"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
@@ -99,9 +101,16 @@ type Plugin struct {
 	CreatedAt   store.Time
 	UpdatedAt   store.Time
 
+	// The compiled module, made on the first call and let go after
+	// IdleUnload without one (a compiled module is tens of MB of native
+	// code), under mod; active counts the calls running on it.
+	mod      sync.Mutex
 	compiled *extism.CompiledPlugin
-	// calls is the calls running on compiled, which a reload waits out
-	// before closing it.
+	cache    wazero.CompilationCache // compiled's own, closed with it (cacheDir)
+	active   int
+	lastUsed time.Time
+	// calls is the calls running, which a reload waits out before closing
+	// the module.
 	calls sync.WaitGroup
 }
 
