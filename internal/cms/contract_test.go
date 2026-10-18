@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"maps"
 	"mime/multipart"
@@ -456,17 +453,16 @@ func seedContract(t *testing.T, s *site) {
 	s.must(200, s.do(s.admin, "PATCH", "/api/settings/general", map[string]any{"setting": map[string]any{"data": map[string]any{
 		"title": "Acme", "site_base_url": "https://acme.example", "phone": "+1 555 0100", "email": "hello@acme.example", "city": "Springfield"}}}))
 
-	img := image.NewRGBA(image.Rect(0, 0, 40, 20))
-	for x := range 40 {
-		img.Set(x, x%20, color.RGBA{20, 120, 200, 255})
-	}
-	var pngData, body bytes.Buffer
-	if err := png.Encode(&pngData, img); err != nil {
+	// A 40×20 blue line, as a file rather than encoded here: image/png's
+	// output (and so the asset's byte_size) differs between Go releases.
+	pngData, err := os.ReadFile("testdata/contract-hero.png")
+	if err != nil {
 		t.Fatal(err)
 	}
+	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	fw, _ := mw.CreateFormFile("file", "hero.png")
-	fw.Write(pngData.Bytes())
+	fw.Write(pngData)
 	mw.WriteField("alt", "A blue line")
 	mw.Close()
 	asset := jsonID(dig(s.must(201, s.do(s.admin, "POST", "/api/assets", body.Bytes(), "Content-Type", mw.FormDataContentType())).Body, "asset", "id"))
