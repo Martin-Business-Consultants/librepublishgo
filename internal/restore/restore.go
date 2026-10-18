@@ -230,6 +230,9 @@ func (imp *Import) prepare(ctx context.Context, opts Options, got unpacked) erro
 	if err := convertForms(ctx, db, rep); err != nil {
 		return fmt.Errorf("converting forms: %w", err)
 	}
+	if err := cleanContent(ctx, db, rep); err != nil {
+		return fmt.Errorf("cleaning up the content: %w", err)
+	}
 	if err := survey(ctx, db, rep); err != nil {
 		return err
 	}

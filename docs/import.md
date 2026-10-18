@@ -147,6 +147,31 @@ renamed `rails_revisions`, rows and all, and this core's is created beside it.
 Two-factor sign-in can't be checked here yet: people with it on are listed;
 `librepublish user disable-2fa --email …` lets them in.
 
+## The content, brought onto this core's terms
+
+Every import cleans up the content on the staged copy, before it's swapped
+in, so an imported site is ready as it lands (the report lists each field
+it changed):
+
+- **Prose becomes rich text.** `text` and `markdown` fields become
+  `richtext` fields, edited with the admin's editor, and their values its
+  document: HTML typed into a textarea, Markdown and plain text alike.
+  Fields holding markup on purpose (a pasted analytics script) become
+  `code`; addresses, alt text and the site's description stay plain text.
+  A repeater of paragraphs becomes one rich text field, `body`.
+- **Images are their image fields.** `image_url` fields and keys go (an
+  image URL that's the only copy of an image is kept, and the report says
+  where), and an alt text field beside an image goes onto the image in the
+  media library, where alt text lives.
+- **An entry's body** (Markdown) holding HTML becomes the Markdown the
+  editor writes.
+- **SEO's old keys** (`seo_title`, `seo_description`, `no_index`) become the
+  standard ones.
+
+The site's templates then draw rich text with the Astro integration's
+`<RichText>`. For a site that's already running, Tools › Clean up content
+(or `ui/scripts/richtext.mjs`) does the same.
+
 ## Putting the previous site back
 
 Everything it replaced is in `DATA_DIR/replaced-<time>/`. With the server

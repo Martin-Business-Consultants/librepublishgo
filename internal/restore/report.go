@@ -28,7 +28,9 @@ type Report struct {
 	Ignored int            `json:"ignored_entries,omitempty"`
 	Blobs   BlobReport     `json:"blobs"`
 	Forms   FormsReport    `json:"forms"`
-	Secrets SecretsReport  `json:"secrets"`
+	// What the content clean-up changed (content.go).
+	Content ContentReport `json:"content"`
+	Secrets SecretsReport `json:"secrets"`
 	// People with two-factor sign-in on, which the Go core can't check.
 	TwoFactorUsers int `json:"two_factor_users,omitempty"`
 	// The users the site being replaced has.
@@ -115,6 +117,13 @@ func (r *Report) WriteText(w io.Writer) {
 	p("  files:        %d (%d whole, %d missing, %d not matching their checksum)", b.Total, b.Copied, b.Missing, b.Mismatched)
 	if f := r.Forms; f.Forms+f.Submissions > 0 {
 		p("  forms:        %d forms, %d submissions, %d emails converted for the Forms plugin", f.Forms, f.Submissions, f.Emails)
+	}
+	if c := r.Content; len(c.Fields)+c.Values+c.URLCaches+c.Bodies+c.SEO > 0 {
+		p("  content:      %d fields changed, %d values onto rich text, %d image URLs removed, %d entry bodies' HTML to Markdown, %d SEO keys renamed, %d alt texts onto images",
+			len(c.Fields), c.Values, c.URLCaches, c.Bodies, c.SEO, c.Alts)
+		for _, f := range c.Fields {
+			p("                %s: %s -> %s", f.Path, f.From, f.To)
+		}
 	}
 	s := r.Secrets.Plan
 	if r.Applied {
