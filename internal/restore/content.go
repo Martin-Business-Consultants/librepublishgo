@@ -15,8 +15,8 @@ import (
 )
 
 // An import brings the content onto this core's terms, on the staged copy
-// before it's swapped in (the admin's Tools › Clean up content and
-// ui/scripts/richtext.mjs do the same to a running site):
+// before it's swapped in (ui/scripts/richtext.mjs, with src/lib/cleanup.js,
+// does the same to a running site):
 //
 //   - prose fields (text, markdown) become richtext, the editor's own
 //     document, their values converted (HTML, Markdown or plain text);

@@ -169,8 +169,8 @@ it changed):
   standard ones.
 
 The site's templates then draw rich text with the Astro integration's
-`<RichText>`. For a site that's already running, Tools › Clean up content
-(or `ui/scripts/richtext.mjs`) does the same.
+`<RichText>`. For a site that's already running, `ui/scripts/richtext.mjs` does the same
+through the API.
 
 ## Putting the previous site back
 

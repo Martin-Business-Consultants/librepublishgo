@@ -2,9 +2,9 @@
 // `markdown`) become `richtext`, the editor's own document; HTML typed into
 // text becomes that document; image URL caches beside image fields go; alt
 // text beside an image moves onto the image; old SEO keys become the
-// standard ones. Tools › Clean up content runs it in the admin (with the
-// signed-in session), scripts/richtext.mjs from a shell (with a token): the
-// same code, so the two can't drift.
+// standard ones. scripts/richtext.mjs runs it from a shell (with a token)
+// against a running site; an import does the same in Go
+// (internal/restore/content.go), with the same guesses.
 //
 // It's idempotent: a run that stopped halfway, or a second one, picks up
 // what's left and changes nothing else. Values are converted by Tiptap
