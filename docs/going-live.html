@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Going live with Libre Publish</title>
+<style>
+  :root {
+    --bg: #fafaf9; --panel: #ffffff; --text: #1c1917; --muted: #57534e; --line: #e7e5e4;
+    --accent: #b45309; --accent-soft: #fef3c7; --ok: #166534; --ok-soft: #dcfce7; --warn: #9a3412; --warn-soft: #ffedd5;
+    --code: #f5f5f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c0a09; --panel: #1c1917; --text: #f5f5f4; --muted: #a8a29e; --line: #292524;
+      --accent: #f59e0b; --accent-soft: #451a03; --ok: #86efac; --ok-soft: #052e16; --warn: #fdba74; --warn-soft: #431407;
+      --code: #292524;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 80px; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 8px; }
+  h2 { font-size: 1.3rem; margin: 48px 0 12px; }
+  h3 { font-size: 1.05rem; margin: 24px 0 8px; }
+  p, li { color: var(--text); }
+  .lede { color: var(--muted); font-size: 1.1rem; margin: 0 0 24px; }
+  code, kbd { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); padding: 1px 6px; border-radius: 4px; }
+  pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font: 0.88rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre code { background: none; padding: 0; }
+  ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; }
+  ol.steps > li { counter-increment: step; position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px 16px 60px; margin: 0 0 12px; }
+  ol.steps > li::before { content: counter(step); position: absolute; left: 16px; top: 14px; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; display: grid; place-items: center; }
+  ol.steps > li > strong:first-child { display: block; font-size: 1.05rem; margin-bottom: 4px; }
+  ol.steps ul { margin: 8px 0 0; padding-left: 20px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 8px 0; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .note { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 14px; border-radius: 6px; margin: 16px 0; }
+  .warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .ok { border-left-color: var(--ok); background: var(--ok-soft); }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li::before { content: "☐ "; color: var(--accent); }
+  @media (max-width: 520px) { ol.steps > li { padding-left: 52px; } th, td { padding: 8px; font-size: 0.92rem; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Going live with Libre Publish</h1>
+  <p class="lede">From an empty server to a live CMS on Hoster, with the old site's content brought in. One site per app; repeat for each site.</p>
+
+  <div class="note warn"><strong>The one rule:</strong> every site keeps everything (database, uploads, secret key) in its own volume at <code>/data</code>. The repository's <code>config/deploy.yml</code> sets that up, and the CMS refuses to start without it, so a deploy can't wipe a site again.</div>
+
+  <h2>Before you start</h2>
+  <ul class="checklist">
+    <li>Hoster is connected to GitHub with access to <code>Martin-Business-Consultants/librepublishgo</code>.</li>
+    <li>The server is set up in Hoster.</li>
+    <li>The CMS's domain (e.g. <code>cms.oldmillbrew.com</code>) points at the server: a DNS A record to its IP.</li>
+    <li>You have the old site's backup (e.g. <code>cms-backup-oldmill-….tar.gz</code>), if you're moving one over.</li>
+  </ul>
+
+  <h2>Go live</h2>
+  <ol class="steps">
+    <li><strong>Create the app</strong>
+      In Hoster: <b>New app</b>, from the GitHub repository <code>Martin-Business-Consultants/librepublishgo</code>, branch <code>main</code>.
+      <ul>
+        <li><b>Name it after the site</b>, e.g. <code>oldmill</code>. The name becomes the site's volume: <code>oldmill-data</code>.</li>
+        <li>Every site needs a name of its own. Never reuse one.</li>
+      </ul>
+    </li>
+    <li><strong>Add the domain</strong>
+      <b>Domains › Add domain</b>: <code>cms.oldmillbrew.com</code>. Hoster takes care of HTTPS.
+    </li>
+    <li><strong>Set the variables</strong>
+      Under <b>Variables</b>:
+      <table>
+        <tr><th>Name</th><th>Value</th><th></th></tr>
+        <tr><td><code>SITE_KEY</code></td><td><code>oldmill</code></td><td>Required. The site's name. It ties the volume to this site.</td></tr>
+        <tr><td><code>APP_URL</code></td><td><code>https://cms.oldmillbrew.com</code></td><td>Optional. The admin records it the first time you open it.</td></tr>
+      </table>
+      Port 80, the <code>/up</code> health check, <code>TRUST_PROXY</code> and the volume come from the repository. Don't add them by hand.
+    </li>
+    <li><strong>Deploy</strong>
+      Press <b>Deploy</b>. When it's done, <b>Logs</b> shows <code>libre publish is up</code>, and <b>Volumes</b> lists <code>oldmill-data</code> at <code>/data</code>.
+      <div class="note">If the log says <i>the data directory isn't on a persistent volume</i>, the volume didn't apply. Check that the app is deploying from <code>main</code> (the repository's <code>config/deploy.yml</code>) and deploy again. Nothing has been lost; the CMS stopped before writing anything.</div>
+    </li>
+    <li><strong>Open the admin</strong>
+      Go to <code>https://cms.oldmillbrew.com/cms/</code>.
+      <ul>
+        <li><b>Moving a site over?</b> Make a first admin on the setup screen (it's replaced in the next step), then carry on.</li>
+        <li><b>Starting fresh?</b> The account you make on the setup screen is your admin. Skip step 6.</li>
+      </ul>
+    </li>
+    <li><strong>Bring the old site in</strong>
+      In the admin: <b>Tools › Import</b>.
+      <ul>
+        <li>Upload the backup, and read the report: files, forms, and the content changes it makes.</li>
+        <li>Type <code>REPLACE</code> and press <b>Replace this site</b>.</li>
+        <li>Sign in with an account from the old site.</li>
+      </ul>
+      The import tidies the content as it comes in: textareas with HTML become Tiptap rich text, the <code>image_url</code> fields go, and alt text moves onto the images. There's no step after it.
+    </li>
+    <li><strong>Turn on backups</strong>
+      In Hoster, <b>Backups</b>: set a <b>Backup schedule</b> (nightly) for <code>oldmill-data</code>, then press <b>Back up now</b> once to see it work. You can also download a backup from the admin at any time: <b>Tools › Backup</b>.
+    </li>
+    <li><strong>Connect the website</strong>
+      <ul>
+        <li>In the admin, <b>Settings › Service tokens</b>: create a token on the <b>Production site</b> role.</li>
+        <li>On the website's host, set <code>CMS_BASE_URL=https://cms.oldmillbrew.com</code> and <code>CMS_API_TOKEN=&lt;that token&gt;</code>.</li>
+        <li>In <b>Settings › General</b>: <b>Public site URL</b> <code>https://oldmillbrew.com</code>, and under <b>Allowed origins</b>, the website's address (one per line).</li>
+        <li>Rebuild the website. <code>npx librepublish-astro sync</code> updates its <code>cms.lock.json</code> if the CMS's schema changed.</li>
+      </ul>
+    </li>
+  </ol>
+
+  <div class="note ok"><strong>Live.</strong> Check <b>Site health</b> on the dashboard. Everything there should pass, including the CMS address.</div>
+
+  <h2>Updating</h2>
+  <ol class="steps">
+    <li><strong>See what's new</strong> The dashboard says when a new version is out, with a link to its notes (<a href="https://github.com/Martin-Business-Consultants/librepublishgo/releases">releases</a>).</li>
+    <li><strong>Back up</strong> Hoster <b>Backups › Back up now</b>.</li>
+    <li><strong>Deploy</strong> Press <b>Deploy</b>, or point the app's branch at the new release's tag (e.g. <code>v2.0.3</code>) and deploy. The new version starts beside the old one and takes over once it's healthy, with no downtime. The database updates itself on start.</li>
+  </ol>
+  <p>To go back, deploy the previous version. If a release's notes say it changed the database, restore the backup instead.</p>
+
+  <h2>Several sites on one server</h2>
+  <table>
+    <tr><th>Each site gets its own</th><th>Example</th></tr>
+    <tr><td>App (and so volume)</td><td><code>oldmill</code> → <code>oldmill-data</code>, <code>acme</code> → <code>acme-data</code></td></tr>
+    <tr><td>Domain</td><td><code>cms.oldmillbrew.com</code>, <code>cms.acme.com</code></td></tr>
+    <tr><td><code>SITE_KEY</code></td><td><code>oldmill</code>, <code>acme</code></td></tr>
+    <tr><td>Backup schedule</td><td>one per volume</td></tr>
+  </table>
+  <p>The first start records <code>SITE_KEY</code> in the site's volume. A container with a different <code>SITE_KEY</code> refuses that volume, so two sites can't end up sharing one database by mistake. If one app has two environments on the same server (staging and production), give each its own service name in its settings, so each gets its own volume.</p>
+
+  <h2>If something goes wrong</h2>
+  <table>
+    <tr><th>You see</th><th>What to do</th></tr>
+    <tr><td>Deploy fails: <i>target failed to become healthy</i></td><td>Open <b>Logs</b>. The CMS prints one line saying why it stopped. The usual ones are below.</td></tr>
+    <tr><td><i>the data directory isn't on a persistent volume</i></td><td>Deploy from <code>main</code> (it has <code>config/deploy.yml</code>) and check <b>Volumes</b>. For a quick throwaway trial only: <code>EPHEMERAL_DATA=1</code>.</td></tr>
+    <tr><td><i>the data directory belongs to another site</i></td><td>Two sites are pointed at one volume. Give each app its own name, or fix <code>SITE_KEY</code>.</td></tr>
+    <tr><td>Images point at <code>localhost</code></td><td>Open the admin once as an Administrator, or set <b>Settings › General › CMS address</b>.</td></tr>
+    <tr><td>Forms say "Couldn't send"</td><td>Add the website's address to <b>Settings › General › Allowed origins</b>.</td></tr>
+    <tr><td>Locked out</td><td>Hoster <b>Shell</b>: <code>librepublish user password --email you@example.com --password -</code>, then type the new password.</td></tr>
+  </table>
+</main>
+</body>
+</html>
