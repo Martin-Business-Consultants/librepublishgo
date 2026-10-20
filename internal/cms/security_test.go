@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -230,7 +231,7 @@ func TestBodiesAndImagesAreBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, err := s.app.variant(*as, 640)
-	if err != nil || path != s.app.blobPath(as.BlobKey) {
+	if err != nil || path != filepath.Join(s.app.cfg.DataDir, "storage", as.BlobKey[0:2], as.BlobKey[2:4], as.BlobKey) {
 		t.Fatalf("variant of a 64-megapixel image: %q %v", path, err)
 	}
 }

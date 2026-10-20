@@ -1,6 +1,7 @@
 package cms
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -56,6 +57,17 @@ func TestPlugin(t *testing.T) {
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/visits/stats", nil))
 	if dig(r.Body, "pages", 0, "path") != "about" || dig(r.Body, "pages", 0, "views") != float64(2) {
 		t.Fatalf("stats: %s", r.Raw)
+	}
+
+	// Hits at once all count: the counter is one add, not a read and a write.
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() { s.do("", "POST", "/api/x/visits/hit", map[string]any{"path": "/about"}) })
+	}
+	wg.Wait()
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/visits/stats", nil))
+	if dig(r.Body, "pages", 0, "views") != float64(22) {
+		t.Fatalf("concurrent hits lost: %s", r.Raw)
 	}
 
 	// It hears the events it hooked.

@@ -8,7 +8,7 @@
 // holding the host's fixed set of capabilities:
 //
 //	content:read   API.Content — live pages, entries and globals
-//	storage        API.KVGet / KVSet / KVDelete / KVList / KVCount — its own namespace
+//	storage        API.KVGet / KVSet / KVAdd / KVDelete / KVList / KVCount — its own namespace
 //	mail           API.Mail — email through Settings › Email
 //	media:write    API.PutMedia — a file into the media library
 //	http           API.HTTP — outbound requests, only to the hosts it declared

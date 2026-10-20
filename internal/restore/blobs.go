@@ -5,10 +5,12 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
@@ -23,7 +25,9 @@ type blobRow struct {
 // fixBlobs puts the database's blobs in order with the files that came:
 // a tenant's <tenant>/ prefix stripped from keys (the files are already
 // stored by the bare key), each file checked against its size and
-// checksum, and files no blob names removed.
+// checksum, and files no blob names removed. A key that isn't one (say
+// "../../x") is replaced with a fresh one that names no file, so nothing
+// later builds a path from it; its attachments stay, missing their file.
 func fixBlobs(ctx context.Context, db *store.DB, staging string, got unpacked, rep *Report) error {
 	rows, err := db.QueryContext(ctx, `SELECT id, key, filename, byte_size, checksum FROM active_storage_blobs ORDER BY id`)
 	if err != nil {
@@ -49,6 +53,9 @@ func fixBlobs(ctx context.Context, db *store.DB, staging string, got unpacked, r
 		if !blobKey.MatchString(key) {
 			b.BadKeys++
 			bad = append(bad, blob.key)
+			if _, err := db.ExecContext(ctx, `UPDATE active_storage_blobs SET key = ? WHERE id = ?`, freshKey(), blob.id); err != nil {
+				return fmt.Errorf("blob #%d's key %q can't be replaced: %w", blob.id, blob.key, err)
+			}
 			continue
 		}
 		if key != blob.key {
@@ -90,6 +97,16 @@ func fixBlobs(ctx context.Context, db *store.DB, staging string, got unpacked, r
 		rep.warn("%d files in the backup belong to no blob in its database and were left out", b.Unreferenced)
 	}
 	return nil
+}
+
+// freshKey is a new Active Storage key: 28 characters of base36.
+func freshKey() string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	out := secret.RandomBytes(28)
+	for i, c := range out {
+		out[i] = alphabet[int(c)%len(alphabet)]
+	}
+	return string(out)
 }
 
 // sameSum is whether checksum (Active Storage's: MD5, base64) is sum's.

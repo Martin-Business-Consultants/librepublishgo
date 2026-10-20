@@ -20,6 +20,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -185,11 +186,17 @@ func (a *App) resolveAssets(ctx context.Context, ids []int64) map[string]Obj {
 	return out
 }
 
-func (a *App) blobPath(key string) string {
-	if len(key) < 4 {
-		return filepath.Join(a.cfg.DataDir, "storage", key)
+// blobKey is an Active Storage key as both cores make them: lowercase
+// base36. Anything else in the key column (an imported "../../x") names no
+// file of ours.
+var blobKey = regexp.MustCompile(`^[a-z0-9]{4,128}$`)
+
+// blobPath is key's file, and false for a key that isn't one.
+func (a *App) blobPath(key string) (string, bool) {
+	if !blobKey.MatchString(key) {
+		return "", false
 	}
-	return filepath.Join(a.cfg.DataDir, "storage", key[0:2], key[2:4], key)
+	return filepath.Join(a.cfg.DataDir, "storage", key[0:2], key[2:4], key), true
 }
 
 // uploadAsset stores an upload and makes its asset.
@@ -205,14 +212,19 @@ func (a *App) uploadAsset(ctx context.Context, actor *Actor, filename, contentTy
 		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"file": {"is empty"}}}
 	}
 	filename = path.Base(strings.ReplaceAll(filename, "\\", "/"))
+	contentType = mediaType(contentType)
 	if contentType == "" || contentType == "application/octet-stream" {
 		if t := mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))); t != "" {
-			contentType = strings.Split(t, ";")[0]
+			contentType = mediaType(t)
 		} else {
-			contentType = http.DetectContentType(data)
+			contentType = mediaType(http.DetectContentType(data))
 		}
 	}
-	if contentType == "text/html" || strings.HasSuffix(strings.ToLower(filename), ".html") {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if contentType == "text/html" || contentType == "application/xhtml+xml" ||
+		slices.Contains([]string{".htm", ".html", ".xhtml"}, strings.ToLower(filepath.Ext(filename))) {
 		return nil, &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"file": {"HTML files can't be uploaded"}}}
 	}
 	meta := map[string]any{"identified": true, "analyzed": true}
@@ -226,7 +238,7 @@ func (a *App) uploadAsset(ctx context.Context, actor *Actor, filename, contentTy
 	}
 	key := strings.ToLower(strings.TrimRight(base32Key(), "="))
 	sum := md5.Sum(data) //nolint:gosec // Active Storage's checksum column is MD5; it's an integrity check, not security
-	p := a.blobPath(key)
+	p, _ := a.blobPath(key)
 	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
 		return nil, err
 	}
@@ -267,6 +279,16 @@ func (a *App) uploadAsset(ctx context.Context, actor *Actor, filename, contentTy
 	return as, err
 }
 
+// mediaType is a Content-Type's bare type, lowercased ("Text/HTML;
+// charset=x" is text/html), and "" for one that doesn't parse.
+func mediaType(ct string) string {
+	t, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return ""
+	}
+	return t
+}
+
 func base32Key() string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := secret.RandomBytes(28)
@@ -283,6 +305,7 @@ func normalizeFolder(f string) string {
 }
 
 func (a *App) saveAsset(ctx context.Context, actor *Actor, as *Asset, p map[string]any) error {
+	shown := [...]any{as.Alt, as.Caption, as.Desc, as.FocalX, as.FocalY}
 	for k, dst := range map[string]*string{"name": &as.Name, "alt": &as.Alt, "caption": &as.Caption, "description": &as.Desc} {
 		if has(p, k) {
 			*dst = str(p[k])
@@ -299,12 +322,49 @@ func (a *App) saveAsset(ctx context.Context, actor *Actor, as *Asset, p map[stri
 			*dst = v
 		}
 	}
+	if shown != [...]any{as.Alt, as.Caption, as.Desc, as.FocalX, as.FocalY} {
+		if err := a.needLivePublish(ctx, actor, as.ID); err != nil {
+			return err
+		}
+	}
 	_, err := a.store.ExecContext(ctx, `UPDATE assets SET name=?, alt=?, caption=?, description=?, folder=?, focal_x=?, focal_y=?, updated_at=? WHERE id=?`,
 		as.Name, as.Alt, as.Caption, as.Desc, as.Folder, as.FocalX, as.FocalY, store.Now().DB(), as.ID)
 	if err == nil {
 		a.audit(ctx, actor, "asset.updated", "Asset", as.ID, as.Filename, nil)
 	}
 	return err
+}
+
+// liveUsers is, for each kind of record that can use an asset, when it's
+// live and the capability that publishes it.
+var liveUsers = []struct{ ownerType, live, capability string }{
+	{"Page", `SELECT 1 FROM pages o WHERE o.id = r.owner_id AND o.status = 'published' AND o.deleted_at IS NULL`, "pages:publish"},
+	{"CollectionEntry", `SELECT 1 FROM collection_entries o WHERE o.id = r.owner_id AND o.status = 'published' AND o.deleted_at IS NULL`, "entries:publish"},
+	{"Global", `SELECT 1 FROM globals o WHERE o.id = r.owner_id AND o.deleted_at IS NULL`, "globals:publish"},
+}
+
+// needLivePublish refuses a change to what the site shows of an asset (its
+// alt text, caption, description, focal point) unless the actor could
+// publish every live record using it: otherwise the change would reach the
+// site without the review a change to that record gets. Assets have no
+// revisions to hold it in, so it's refused.
+func (a *App) needLivePublish(ctx context.Context, actor *Actor, id int64) error {
+	for _, u := range liveUsers {
+		if actor != nil && actor.Can(u.capability) {
+			continue
+		}
+		n, err := store.Count(ctx, a.store, `SELECT count(*) FROM content_references r WHERE r.ref_type = 'asset' AND r.ref_id = ? AND r.owner_type = ? AND EXISTS (`+u.live+`)`,
+			strconv.FormatInt(id, 10), u.ownerType)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			e := apierr.Forbidden(u.capability)
+			e.Message = "This file is used by live content, so changing its alt text, caption, description or focal point needs " + u.capability + ", which your role doesn't grant."
+			return e
+		}
+	}
+	return nil
 }
 
 func (a *App) purgeAsset(ctx context.Context, actor *Actor, as *Asset) error {
@@ -328,8 +388,10 @@ func (a *App) purgeAsset(ctx context.Context, actor *Actor, as *Asset) error {
 	if err != nil {
 		return err
 	}
-	if as.BlobKey != "" {
-		os.Remove(a.blobPath(as.BlobKey))
+	// A key that isn't one is left alone: it names no file of ours, and as
+	// a glob it could name others'.
+	if p, ok := a.blobPath(as.BlobKey); ok {
+		os.Remove(p)
 		matches, _ := filepath.Glob(filepath.Join(a.cfg.DataDir, "variants", as.BlobKey+"-*"))
 		for _, m := range matches {
 			os.Remove(m)
@@ -392,7 +454,12 @@ func (a *App) serveFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	file := a.blobPath(key)
+	file, ok := a.blobPath(key)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	original := file
 	if variant != "" && as.variantable() {
 		width, err := strconv.Atoi(strings.TrimPrefix(variant, "w"))
 		if err != nil || !strings.HasPrefix(variant, "w") || (width != 256 && !slices.Contains(deliveryWidths, width)) {
@@ -402,10 +469,16 @@ func (a *App) serveFile(w http.ResponseWriter, r *http.Request) {
 		file, err = a.variant(as, width)
 		if err != nil {
 			a.log.Warn("variant", "key", key, "err", err)
-			file = a.blobPath(key)
+			file = original
 		}
 	}
-	f, err := os.Open(file) //nolint:gosec // file is a blob or variant path built from a key the database knows
+	// Opened within the data directory, so no path can leave it.
+	rel, err := filepath.Rel(a.cfg.DataDir, file)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := os.OpenInRoot(a.cfg.DataDir, rel)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -416,7 +489,10 @@ func (a *App) serveFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unreadable", http.StatusInternalServerError)
 		return
 	}
-	ct := as.Type
+	ct := mediaType(as.Type)
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
 	if strings.HasSuffix(file, ".jpg") {
 		ct = "image/jpeg"
 	} else if strings.HasSuffix(file, ".png") {
@@ -426,11 +502,25 @@ func (a *App) serveFile(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", ct)
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-	if !strings.HasPrefix(ct, "image/") && !strings.HasPrefix(ct, "video/") && !strings.HasPrefix(ct, "audio/") && ct != "application/pdf" {
+	if !inline(ct) {
 		h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", as.Filename))
 	}
 	http.ServeContent(w, r, "", st.ModTime(), f)
 }
+
+// inline is whether a file of type ct is shown in the browser rather than
+// downloaded: only what can't carry script. SVG can, so it downloads.
+func inline(ct string) bool {
+	switch ct {
+	case "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif", "image/bmp", "image/x-icon", "image/vnd.microsoft.icon", "application/pdf":
+		return true
+	}
+	return strings.HasPrefix(ct, "video/") || strings.HasPrefix(ct, "audio/")
+}
+
+// decodes bounds how many images are decoded and resized at once: each can
+// take 160 MB, and the requests that start them needn't be signed in.
+var decodes = make(chan struct{}, 2)
 
 // Decoding an image takes 4 bytes a pixel whatever its file size: past
 // maxVariantPixels the original is served rather than resized, and an upload
@@ -457,7 +547,11 @@ func (a *App) variant(as Asset, width int) (string, error) {
 	if _, err := os.Stat(out); err == nil {
 		return out, nil
 	}
-	src, err := os.Open(a.blobPath(as.BlobKey))
+	orig, ok := a.blobPath(as.BlobKey)
+	if !ok {
+		return "", errors.New("not a blob key")
+	}
+	src, err := os.Open(orig) //nolint:gosec // a path built from a key checked as one
 	if err != nil {
 		return "", err
 	}
@@ -467,18 +561,20 @@ func (a *App) variant(as Asset, width int) (string, error) {
 		return "", err
 	}
 	if cfg.Width <= width || pixels(cfg) > maxVariantPixels {
-		return a.blobPath(as.BlobKey), nil
+		return orig, nil
 	}
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
+	decodes <- struct{}{}
+	defer func() { <-decodes }()
 	img, _, err := image.Decode(src)
 	if err != nil {
 		return "", err
 	}
 	b := img.Bounds()
 	if b.Dx() <= width {
-		return a.blobPath(as.BlobKey), nil
+		return orig, nil
 	}
 	height := b.Dy() * width / b.Dx()
 	dst := image.NewRGBA(image.Rect(0, 0, width, height))

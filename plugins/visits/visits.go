@@ -66,16 +66,14 @@ func hit(ctx context.Context, api *plugin.API, req *plugin.Request) (*plugin.Res
 		api.Log(err.Error())
 		return plugin.JSON(http.StatusNotFound, map[string]string{"error": "not_found"}), nil
 	}
-	n, _, err := api.KVGet(ctx, "views:"+path)
+	// One add, not a read and a write: hits at once all count.
+	views, err := api.KVAdd(ctx, "views:"+path, 1)
 	if err != nil {
 		// Without storage, count from nothing.
 		api.Log(err.Error())
+		views = 1
 	}
-	count, _ := strconv.Atoi(n)
-	if err := api.KVSet(ctx, "views:"+path, strconv.Itoa(count+1)); err != nil {
-		api.Log(err.Error())
-	}
-	return plugin.JSON(http.StatusOK, map[string]any{"path": path, "views": count + 1}), nil
+	return plugin.JSON(http.StatusOK, map[string]any{"path": path, "views": views}), nil
 }
 
 func stats(ctx context.Context, api *plugin.API, _ *plugin.Request) (*plugin.Response, error) {

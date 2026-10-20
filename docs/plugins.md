@@ -118,6 +118,7 @@ wasn't granted to this plugin`) and does nothing.
 | `Content(ctx, q)` | `content:read` | live content, shaped as `/api/v1` shapes it: `ContentQuery{Page: "about"}`, `{Pages: true}`, `{Collection: "posts"}`, `{Collection: "posts", Entry: "hello"}` or `{Global: "nav"}` |
 | `KVGet(ctx, key)` | `storage` | the value, and whether there is one |
 | `KVSet(ctx, key, value)` | `storage` | value ≤ 1 MB, ≤ 100,000 keys |
+| `KVAdd(ctx, key, delta)` | `storage` | adds to a number in one step (concurrent adds all count); the sum |
 | `KVDelete(ctx, key)` | `storage` | |
 | `KVList(ctx, prefix, after, limit)` | `storage` | keys in order, ≤ 1000 a page, and the next page's `after` (`""` at the end) |
 | `KVAll(ctx, prefix)`, `KVCount(ctx, prefix)` | `storage` | every key under a prefix; how many |
