@@ -127,7 +127,17 @@ func (a *App) saveWebhook(c *Ctx, h *webhook.Hook, p map[string]any) (string, er
 		old := h.Headers.Map()
 		next := map[string]any{}
 		if m, ok := p["headers"].(map[string]any); ok {
-			keepMasked(next, old, m)
+			// Every header shows masked (maskHeaders): one written back
+			// as shown keeps what's there.
+			for k, v := range m {
+				if s, ok := v.(string); ok && strings.HasPrefix(s, "***") {
+					if ov, ok := old[k]; ok {
+						next[k] = ov
+					}
+				} else if v != nil {
+					next[k] = v
+				}
+			}
 		}
 		h.Headers = store.MustJSON(next)
 	}
@@ -432,11 +442,10 @@ func sampleEventData(event string) map[string]any {
 // headers (h's own masked), and its body exactly.
 func tryJSON(h *webhook.Hook, out *webhook.Outgoing, event string, data any, from string) Obj {
 	headers := map[string]string{}
-	masked, _ := redact(h.Headers.Map()).(map[string]any) // a map, as given
 	for k := range out.Header {
 		headers[k] = out.Header.Get(k)
 	}
-	for k, v := range masked {
+	for k, v := range maskHeaders(h.Headers.Map()) {
 		headers[http.CanonicalHeaderKey(k)] = str(v)
 	}
 	return O("event", event, "data", data, "data_from", from, "url", h.URL, "testing_url", h.TestingURL, "headers", headers,
@@ -538,9 +547,24 @@ func (a *App) webhookDeliveries(c *Ctx) error {
 	return c.JSON(200, O("deliveries", out))
 }
 
-// webhookJSON is a webhook as the API shows it, its headers redacted.
+// maskHeaders is a webhook's own headers as they're shown: every value
+// masked, since what a header carries (a key, a session, a signature) has
+// no name to tell it by.
+func maskHeaders(h map[string]any) map[string]any {
+	out := make(map[string]any, len(h))
+	for k, v := range h {
+		if s := str(v); s != "" {
+			out[k] = mask(s)
+		} else {
+			out[k] = ""
+		}
+	}
+	return out
+}
+
+// webhookJSON is a webhook as the API shows it, its headers masked.
 func webhookJSON(h *webhook.Hook) Obj {
-	return O("id", h.ID, "name", h.Name, "url", h.URL, "testing_url", h.TestingURL, "kind", h.Kind, "events", h.Events, "event_filters", h.EventFilters, "body_map", h.BodyMap, "headers", redact(h.Headers.Map()),
+	return O("id", h.ID, "name", h.Name, "url", h.URL, "testing_url", h.TestingURL, "kind", h.Kind, "events", h.Events, "event_filters", h.EventFilters, "body_map", h.BodyMap, "headers", maskHeaders(h.Headers.Map()),
 		"active", h.Active, "failure_count", h.FailureCount, "last_delivery_at", h.LastDeliveryAt, "last_status", h.LastStatus,
 		"created_at", h.CreatedAt, "updated_at", h.UpdatedAt)
 }

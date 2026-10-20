@@ -226,6 +226,10 @@ type Env interface {
 	// Deliver sends a plugin's event to the webhooks that take it, and to
 	// the plugins that hook it.
 	Deliver(ctx context.Context, event string, data any)
+	// Seal encrypts a secret with the install's key; Reveal is its
+	// plaintext again (a value that was never sealed, as it is).
+	Seal(plain string) string
+	Reveal(v string) string
 }
 
 // Site is the site a plugin runs on.

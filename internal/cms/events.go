@@ -22,8 +22,7 @@ func (a *App) publish(ctx context.Context, ch change) {
 }
 
 // listen wires who hears what: webhooks, the deploy and plugins hear of
-// changes, any change may have moved the schema's digest, and the email
-// settings are sealed before they're written.
+// changes, and any change may have moved the schema's digest.
 func (a *App) listen() {
 	a.listeners = []listener{
 		func(ctx context.Context, ch change) {
@@ -46,8 +45,5 @@ func (a *App) listen() {
 				a.schemaTouched()
 			}
 		},
-	}
-	a.beforeSetting = map[string]func(data map[string]any){
-		"email": a.sealMailPassword,
 	}
 }

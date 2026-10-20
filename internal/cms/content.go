@@ -328,7 +328,7 @@ func (a *App) publicURL(c *Content) string {
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path
 	}
-	base := strings.TrimRight(strings.TrimSpace(str(a.general(context.Background())["site_base_url"])), "/")
+	base := strings.TrimRight(strings.TrimSpace(str(a.general(a.ctx)["site_base_url"])), "/")
 	if base == "" {
 		return path
 	}

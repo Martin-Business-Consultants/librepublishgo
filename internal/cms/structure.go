@@ -565,6 +565,7 @@ func (a *App) seed() error {
 	if n == 0 {
 		_, err := a.store.ExecContext(ctx, `INSERT INTO settings (key, data, created_at, updated_at) VALUES ('general', ?, ?, ?)`,
 			`{"title":"My site","default_locale":"en","serving":"api_only"}`, store.Now().DB(), store.Now().DB())
+		a.generalCache.forget()
 		return err
 	}
 	return nil

@@ -112,6 +112,25 @@ func TestSealOpen(t *testing.T) {
 	}
 }
 
+func TestReveal(t *testing.T) {
+	t.Parallel()
+	k := testKey(t)
+	for name, c := range map[string]struct{ in, want string }{
+		"sealed":                {k.Seal("hunter22"), "hunter22"},
+		"kept before sealing":   {"hunter22", "hunter22"},
+		"another key's":         {testKey(t).Seal("hunter22"), ""},
+		"empty":                 {"", ""},
+		"masked, as it's shown": {"***r22", "***r22"},
+	} {
+		if got := k.Reveal(c.in); got != c.want {
+			t.Errorf("Reveal(%s) = %q, want %q", name, got, c.want)
+		}
+	}
+	if !Sealed(k.Seal("")) || Sealed("plain") {
+		t.Error("Sealed doesn't tell a sealed value from a plain one")
+	}
+}
+
 // FuzzSealOpen: any value comes back from its seal as it went in, and
 // nothing a database row holds makes Open panic.
 func FuzzSealOpen(f *testing.F) {

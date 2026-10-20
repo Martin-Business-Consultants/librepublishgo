@@ -118,6 +118,8 @@ func (e *siteEnv) Audit(context.Context, Actor, string, int64, string, map[strin
 func (e *siteEnv) Deliver(_ context.Context, event string, _ any) {
 	e.delivered = append(e.delivered, event)
 }
+func (e *siteEnv) Seal(plain string) string { return plain }
+func (e *siteEnv) Reveal(v string) string   { return v }
 
 // SiteHosts grants the site's own origins as they are when it calls: one
 // added later is reached, one that isn't the site's isn't.

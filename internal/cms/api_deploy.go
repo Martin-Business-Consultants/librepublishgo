@@ -1,14 +1,18 @@
 package cms
 
 import (
-	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 )
 
-func (a *App) deployJSON(ctx context.Context) (Obj, error) {
+// deployJSON is the deploy as the API shows it. The build hook runs a
+// deploy for anyone who has it, so who can't change it sees it masked,
+// in the config and in a failed build's error alike.
+func (a *App) deployJSON(c *Ctx) (Obj, error) {
+	ctx := c.R.Context()
 	cfg, err := a.setting(ctx, "deploy")
 	if err != nil {
 		return nil, err
@@ -21,7 +25,12 @@ func (a *App) deployJSON(ctx context.Context) (Obj, error) {
 	if err != nil {
 		return nil, err
 	}
-	return O("config", redact(cfg), "frontend", redact(front), "last", status,
+	config := redact(cfg)
+	if !c.can("settings:write") {
+		config = redactURLs(config)
+		hideHook(status, str(cfg["hook_url"]))
+	}
+	return O("config", config, "frontend", redact(front), "last", status,
 		"configured", str(cfg["hook_url"]) != "" || str(front["webhook_url"]) != ""), nil
 }
 
@@ -29,7 +38,7 @@ func (a *App) showDeploy(c *Ctx) error {
 	if err := c.Need("settings:read"); err != nil {
 		return err
 	}
-	d, err := a.deployJSON(c.R.Context())
+	d, err := a.deployJSON(c)
 	if err != nil {
 		return err
 	}
@@ -54,10 +63,13 @@ func (a *App) updateDeploy(c *Ctx) error {
 	if d, ok := body["deploy"].(map[string]any); ok {
 		data = d
 	}
+	if err := a.needSettingAccess(c, "deploy", data, false); err != nil {
+		return err
+	}
 	if _, err := a.putSetting(c.R.Context(), c.Actor, "deploy", data, false); err != nil {
 		return err
 	}
-	d, err := a.deployJSON(c.R.Context())
+	d, err := a.deployJSON(c)
 	if err != nil {
 		return err
 	}
@@ -71,11 +83,27 @@ func (a *App) triggerDeploy(c *Ctx) error {
 	status, err := a.deploys.Trigger(c.R.Context(), "manual")
 	a.audit(c.R.Context(), c.Actor, "deploy.triggered", "Deploy", 0, "manual", nil)
 	if err != nil {
-		return &apierr.Error{Status: 502, Code: "deploy_failed", Message: err.Error(), Extra: map[string]any{"deploy": status}}
+		msg := err.Error()
+		if !c.can("settings:write") {
+			hook := str(a.settingOr(c.R.Context(), "deploy")["hook_url"])
+			hideHook(status, hook)
+			if hook != "" {
+				msg = strings.ReplaceAll(msg, hook, maskURL(hook))
+			}
+		}
+		return &apierr.Error{Status: 502, Code: "deploy_failed", Message: msg, Extra: map[string]any{"deploy": status}}
 	}
 	c.Summary = "Deploy " + str(status["status"]) + "."
 	c.Crumbs = []Crumb{step("Whether it worked", "get_deploy")}
 	return c.JSON(202, O("ok", true, "deploy", status))
+}
+
+// hideHook masks the build hook in a deploy's status: a failed post's
+// error names the address it went to.
+func hideHook(status map[string]any, hook string) {
+	if e := str(status["error"]); hook != "" && e != "" {
+		status["error"] = strings.ReplaceAll(e, hook, maskURL(hook))
+	}
 }
 
 func (a *App) showFrontend(c *Ctx) error {

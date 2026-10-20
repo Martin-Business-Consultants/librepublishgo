@@ -55,6 +55,15 @@ func (a *API) Emit(ctx context.Context, event string, data any) error {
 	return nil
 }
 
+// Seal encrypts a secret the plugin keeps (a captcha's key, a hook's
+// signing secret) with the install's key, so its storage doesn't hold it
+// in the clear. "" stays "", and a sealed value stays as it is.
+func (a *API) Seal(plain string) string { return a.h.env.Seal(plain) }
+
+// Reveal is what Seal sealed, as it was; a value never sealed is
+// answered as it is, and one another install's key sealed as "".
+func (a *API) Reveal(v string) string { return a.h.env.Reveal(v) }
+
 // Content is live content, shaped as /api/v1 shapes it (content:read).
 func (a *API) Content(ctx context.Context, q ContentQuery) (any, error) {
 	if err := a.need("content:read", a.grants.ContentRead); err != nil {
