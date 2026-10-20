@@ -37,6 +37,61 @@ X-CMS-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the webhook
 - A page's `data` and an entry's carry the keys the contract lists; an entry
   has `collection_slug` in place of `path`.
 
+That's an **internal** webhook: a receiver you run, sent the CMS's
+envelope and signed. Another service that wants its own shape takes an
+external one (below).
+
+## External webhooks
+
+An **external** webhook is another service's address (a CRM, a mailing
+list) that wants its own JSON, not the CMS's envelope. Its **body** is a
+list of fields, each a key of what's sent, a value and a transform:
+
+| Key | Value | Transform |
+| --- | --- | --- |
+| `service_type` | `values.service_type` | `slug` |
+| `initial_start_date` | `values.delivery_date` | `date_us` |
+| `email` | `values.email` | |
+| `source` | `website` | `text` |
+
+A value is a dotted path in the event's `data` (`values.email`, a
+submission's answer; `hook.quote_id`, what its form's hook added; `form`;
+`submission_id`), or, with `text`, the text sent as it is. The transforms
+are `slug` (Keep It → `keep-it`), `lowercase`, `uppercase`, `date_us`
+(2026-11-14 → `11/14/2026`), `number`, and `text`; none leaves the value as
+it is. A path the event lacks sends `""` (`null` for a number), and a list's
+items are transformed one by one. With no fields, the event's `data` is
+sent as it is.
+
+```http
+POST <the webhook's URL>
+Content-Type: application/json
+User-Agent: librepublish-webhooks/1
+
+{"email": "ada@example.test", "initial_start_date": "11/14/2026",
+ "service_type": "move-it", "source": "website"}
+```
+
+It isn't signed, and has no `X-CMS-Event`: the service doesn't know the
+CMS. Its headers (`headers` in the API) are sent with it, for one that
+wants a key. "Send a test" posts the test event through its fields, which
+a CRM takes for a real, mostly blank, lead.
+
+```sh
+cms post /webhooks '{"webhook":{"name":"Stella","kind":"external","url":"https://…",
+  "events":["submission.created"],
+  "event_filters":{"submission.created":{"form":["quote"]}},
+  "body_map":[{"key":"service_type","value":"values.service_type","transform":"slug"}, …]}}'
+```
+
+## Only some events
+
+A webhook's **Only when** conditions (`event_filters`) narrow an event to
+those whose data says so: `{"submission.created": {"form": ["quote"]}}`
+takes only the quote form's submissions. Each is a path, as above, and the
+values it may have (any of a list's); every condition on the event must
+hold. An event without conditions is taken whole.
+
 ## schema.changed
 
 ```json
@@ -78,7 +133,8 @@ receivers should see includes `PubliclyAddressable` and gives a
 
 ## Deliveries
 
-Each delivery is logged with its status, timing and any error, and a webhook
+Each delivery is logged with its status, timing, any error and the body
+it sent (Deliveries › Body), and a webhook
 that keeps failing is shown as failing. A webhook's URL must not resolve to a
 private, loopback or link-local address unless the install sets
 `CMS_ALLOW_PRIVATE_WEBHOOKS=true` (docs/install.md).

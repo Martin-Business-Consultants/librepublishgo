@@ -15,7 +15,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,8 +51,10 @@ func New(db *store.DB, key *secret.Key, log *slog.Logger, tenant string, spawn S
 type Hook struct {
 	ID                   int64
 	Name, URL, Secret    string
+	Kind                 string // Internal or External
 	Events, Headers      store.JSON
 	EventFilters         store.JSON
+	BodyMap              store.JSON // an external one's Fields
 	Active               bool
 	FailureCount         int
 	LastDeliveryAt       store.Time
@@ -61,7 +62,7 @@ type Hook struct {
 	CreatedAt, UpdatedAt store.Time
 }
 
-const cols = `id, name, url, secret, events, headers, event_filters, active, failure_count, last_delivery_at, COALESCE(last_status, ''), created_at, updated_at`
+const cols = `id, name, url, secret, kind, body_map, events, headers, event_filters, active, failure_count, last_delivery_at, COALESCE(last_status, ''), created_at, updated_at`
 
 // List is the webhooks matching where (all of them when it's "").
 func (d *Dispatcher) List(ctx context.Context, where string, args ...any) ([]*Hook, error) {
@@ -76,10 +77,10 @@ func (d *Dispatcher) List(ctx context.Context, where string, args ...any) ([]*Ho
 	out := []*Hook{}
 	for rows.Next() {
 		h := &Hook{}
-		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Secret, &h.Events, &h.Headers, &h.EventFilters, &h.Active, &h.FailureCount, &h.LastDeliveryAt, &h.LastStatus, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Secret, &h.Kind, &h.BodyMap, &h.Events, &h.Headers, &h.EventFilters, &h.Active, &h.FailureCount, &h.LastDeliveryAt, &h.LastStatus, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
-		h.Events, h.Headers, h.EventFilters = h.Events.Or("[]"), h.Headers.Or("{}"), h.EventFilters.Or("{}")
+		h.Events, h.Headers, h.EventFilters, h.BodyMap = h.Events.Or("[]"), h.Headers.Or("{}"), h.EventFilters.Or("{}"), h.BodyMap.Or("[]")
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -98,8 +99,9 @@ func (h *Hook) secret(s *secret.Key) (string, bool) {
 	return h.Secret, true
 }
 
-// Deliver sends event to every active webhook listening for it, in the
-// background: the request that caused it can end first.
+// Deliver sends event to every active webhook that takes it (its events
+// and filters), in the background: the request that caused it can end
+// first.
 func (d *Dispatcher) Deliver(ctx context.Context, event string, data any) {
 	hooks, err := d.List(ctx, "active = 1")
 	if err != nil {
@@ -107,11 +109,7 @@ func (d *Dispatcher) Deliver(ctx context.Context, event string, data any) {
 		return
 	}
 	for _, h := range hooks {
-		events := []string{}
-		for _, e := range h.Events.List() {
-			events = append(events, jsonv.String(e))
-		}
-		if len(events) > 0 && !slices.Contains(events, event) && !slices.Contains(events, "*") {
+		if !h.Takes(event, data) {
 			continue
 		}
 		d.pending.Add(1)
@@ -135,9 +133,17 @@ type envelope struct {
 	Data        any    `json:"data"`
 }
 
-// Send makes one delivery and records it.
+// Send makes one delivery and records it: an internal webhook's is the
+// envelope, signed; an external one's is the body its fields build.
 func (d *Dispatcher) Send(ctx context.Context, h *Hook, event string, data any) (status int, err error) {
-	body, merr := json.Marshal(envelope{event, d.tenant, time.Now().UTC().Format(time.RFC3339), data})
+	external := h.Kind == External
+	var body []byte
+	var merr error
+	if external {
+		body, merr = json.Marshal(Body(Fields(h.BodyMap), data))
+	} else {
+		body, merr = json.Marshal(envelope{event, d.tenant, time.Now().UTC().Format(time.RFC3339), data})
+	}
 	start := time.Now()
 	defer func() {
 		if rerr := d.record(ctx, h, event, body, status, time.Since(start), err); rerr != nil {
@@ -148,7 +154,7 @@ func (d *Dispatcher) Send(ctx context.Context, h *Hook, event string, data any) 
 		return 0, merr
 	}
 	secret, ok := h.secret(d.key)
-	if !ok {
+	if !ok && !external {
 		return 0, fmt.Errorf("the signing secret can't be read here (another install's key, or cleared by an import): rotate it")
 	}
 	if err := outbound.CheckURL(h.URL); err != nil {
@@ -158,12 +164,14 @@ func (d *Dispatcher) Send(ctx context.Context, h *Hook, event string, data any) 
 	if err != nil {
 		return 0, err
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "librepublish-webhooks/1")
-	req.Header.Set("X-CMS-Event", event)
-	req.Header.Set("X-CMS-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	if !external {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		req.Header.Set("X-CMS-Event", event)
+		req.Header.Set("X-CMS-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	}
 	for k, v := range h.Headers.Map() {
 		req.Header.Set(k, jsonv.String(v))
 	}

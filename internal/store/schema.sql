@@ -308,6 +308,8 @@ CREATE TABLE IF NOT EXISTS webhooks (
   name varchar NOT NULL,
   url varchar NOT NULL,
   secret varchar NOT NULL,
+  kind varchar DEFAULT 'internal' NOT NULL,
+  body_map json DEFAULT '[]' NOT NULL,
   events json DEFAULT '[]' NOT NULL,
   event_filters json DEFAULT '{}' NOT NULL,
   headers json DEFAULT '{}' NOT NULL,

@@ -384,6 +384,23 @@ func TestFormsShowIfAndHook(t *testing.T) {
 		mu.Unlock()
 	}))
 	defer recv.Close()
+	// An external webhook is sent the body its fields build, unsigned.
+	var crmBodies [][]byte
+	var crmSigs []string
+	crm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		crmBodies, crmSigs = append(crmBodies, b), append(crmSigs, r.Header.Get("X-CMS-Signature")+r.Header.Get("X-CMS-Event"))
+		mu.Unlock()
+	}))
+	defer crm.Close()
+	var otherForm int
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		otherForm++
+		mu.Unlock()
+	}))
+	defer other.Close()
 
 	s.must(200, s.do(s.admin, "PATCH", "/api/settings/email", map[string]any{"setting": map[string]any{"data": map[string]any{
 		"smtp_host": "smtp.acme.test", "from_name": "Acme", "from_email": "hello@acme.test"}}}))
@@ -395,6 +412,33 @@ func TestFormsShowIfAndHook(t *testing.T) {
 		t.Fatalf("events: %s", r.Raw)
 	}
 	s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": map[string]any{"name": "crm", "url": recv.URL, "events": []any{"submission.created"}}}))
+	stella := map[string]any{"name": "Stella", "url": crm.URL, "kind": "external", "events": []any{"submission.created"},
+		"event_filters": map[string]any{"submission.created": map[string]any{"form": "quote"}},
+		"body_map": []any{
+			map[string]any{"key": "service_type", "value": "values.service", "transform": "slug"},
+			map[string]any{"key": "initial_zip", "value": "values.zip"},
+			map[string]any{"key": "fd_zip", "value": "values.to_zip"},
+			map[string]any{"key": "email", "value": "values.email"},
+			map[string]any{"key": "quote_id", "value": "hook.quote_id"},
+			map[string]any{"key": "source", "value": "website", "transform": "text"},
+		}}
+	// Each field has a key of its own, a value and a transform there is.
+	badHook := map[string]any{"name": "x", "url": crm.URL, "kind": "outside", "body_map": []any{
+		map[string]any{"key": "a", "value": "values.a"}, map[string]any{"key": "a", "value": "", "transform": "shout"}}}
+	r = s.must(422, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": badHook}))
+	for _, k := range []string{"kind", "body_map[1].key", "body_map[1].value", "body_map[1].transform"} {
+		if dig(r.Body, "errors", k, 0) == nil {
+			t.Fatalf("%s: %s", k, r.Raw)
+		}
+	}
+	r = s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": stella}))
+	stellaID := str(dig(r.Body, "webhook", "id"))
+	if dig(r.Body, "webhook", "kind") != "external" || dig(r.Body, "webhook", "event_filters", "submission.created", "form", 0) != "quote" ||
+		dig(r.Body, "webhook", "body_map", 0, "transform") != "slug" {
+		t.Fatalf("external webhook: %s", r.Raw)
+	}
+	s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": map[string]any{"name": "contact only", "url": other.URL,
+		"events": []any{"submission.created"}, "event_filters": map[string]any{"submission.created": map[string]any{"form": []any{"contact"}}}}}))
 
 	form := map[string]any{
 		"name": "Quote", "slug": "quote", "status": "active", "store_submissions": true, "min_seconds": 0,
@@ -470,6 +514,21 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	s.app.hooks.Wait()
 	if len(events) != 1 || dig(events[0], "event") != "submission.created" || dig(events[0], "data", "values", "zip") != "32207" || dig(events[0], "data", "hook", "quote_id") != "Q-42" {
 		t.Fatalf("webhook: %v", events)
+	}
+	var sent map[string]any
+	if len(crmBodies) != 1 || json.Unmarshal(crmBodies[0], &sent) != nil || crmSigs[0] != "" {
+		t.Fatalf("external: %q %q", crmBodies, crmSigs)
+	}
+	if want := map[string]any{"service_type": "keep-it", "initial_zip": "32207", "fd_zip": "", "email": "a@x.test", "quote_id": "Q-42", "source": "website"}; !maps.Equal(sent, want) {
+		t.Fatalf("external body %v, want %v", sent, want)
+	}
+	if otherForm != 0 {
+		t.Fatalf("another form's webhook heard of it")
+	}
+	// Its deliveries show what it was sent.
+	r = s.must(200, s.do(s.admin, "GET", "/api/webhooks/"+stellaID+"/deliveries", nil))
+	if dig(r.Body, "deliveries", 0, "payload", "service_type") != "keep-it" {
+		t.Fatalf("deliveries: %s", r.Raw)
 	}
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
 	id := str(dig(r.Body, "submissions", 0, "id"))

@@ -187,6 +187,11 @@ values, hook}`, in the webhook envelope (`contracts/webhooks/submission.created.
 It goes out after the submission is kept, in the background, so it can't
 change what the visitor sees: that's the hook's job.
 
+A CRM that wants a lead in its own shape takes an **external** webhook:
+its body maps the answers (`values.email`) and the hook's values
+(`hook.quote_id`) to the CRM's keys, and **Only when** `form` is the form
+keeps it to that form's submissions (docs/webhooks.md).
+
 ## Submissions
 
 **Forms › Submissions** lists them newest first: unread, read, spam, by
