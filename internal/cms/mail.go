@@ -8,7 +8,6 @@ import (
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
-	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 )
 
 // ---- email ---------------------------------------------------------------
@@ -42,10 +41,9 @@ func (a *App) mailConfig(ctx context.Context) mail.Config {
 			port = 587
 		}
 	}
-	password, _ := a.secrets.Open(str(s["smtp_password"]))
 	return mail.Config{
 		Host: strings.TrimSpace(str(s["smtp_host"])), Port: port, Security: security,
-		Username: str(s["smtp_username"]), Password: password,
+		Username: str(s["smtp_username"]), Password: str(s["smtp_password"]),
 		FromName: str(s["from_name"]), FromEmail: strings.TrimSpace(str(s["from_email"])), ReplyTo: strings.TrimSpace(str(s["reply_to"])),
 	}
 }
@@ -105,11 +103,4 @@ func strOr(s, fallback string) string {
 		return fallback
 	}
 	return s
-}
-
-// sealMailPassword keeps settings/email's password encrypted at rest.
-func (a *App) sealMailPassword(data map[string]any) {
-	if pw, ok := data["smtp_password"].(string); ok && pw != "" && !strings.HasPrefix(pw, "***") && !strings.HasPrefix(pw, secret.SealedPrefix) {
-		data["smtp_password"] = a.secrets.Seal(pw)
-	}
 }

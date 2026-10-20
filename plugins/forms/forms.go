@@ -162,11 +162,19 @@ const (
 func (c *call) loadForm(slug string) (Form, bool) {
 	var f Form
 	ok := c.kvGetJSON("form:"+slug, &f)
+	f.TurnstileSecret, f.RecaptchaSecret, f.HookSecret = c.api.Reveal(f.TurnstileSecret), c.api.Reveal(f.RecaptchaSecret), c.api.Reveal(f.HookSecret)
 	// Forms saved before the captcha choice used Turnstile when keyed.
 	if f.Captcha == "" && f.TurnstileSecret != "" {
 		f.Captcha = "turnstile"
 	}
 	return f, ok
+}
+
+// storeForm keeps f, its secrets sealed (loadForm opens them); "" when
+// it's stored, or why it isn't.
+func (c *call) storeForm(f Form) string {
+	f.TurnstileSecret, f.RecaptchaSecret, f.HookSecret = c.api.Seal(f.TurnstileSecret), c.api.Seal(f.RecaptchaSecret), c.api.Seal(f.HookSecret)
+	return c.kvSetJSON("form:"+f.Slug, f)
 }
 
 func (c *call) formStats(slug string) stats {
@@ -319,7 +327,7 @@ func (c *call) saveForm() *plugin.Response {
 		f.CreatedAt = now()
 	}
 	f.UpdatedAt = now()
-	if e := c.kvSetJSON("form:"+f.Slug, f); e != "" {
+	if e := c.storeForm(f); e != "" {
 		return reply(500, map[string]string{"error": "storage", "message": e})
 	}
 	if existing && f.Slug != id {
@@ -511,7 +519,7 @@ func (c *call) duplicateForm() *plugin.Response {
 		f.Slug = fmt.Sprintf("%s-%d", base, i)
 	}
 	f.CreatedAt, f.UpdatedAt = now(), now()
-	c.kvSetJSON("form:"+f.Slug, f)
+	c.storeForm(f)
 	return reply(200, map[string]any{"ok": true, "message": "Duplicated as " + f.Name + ".", "form": c.forAdmin(f)})
 }
 

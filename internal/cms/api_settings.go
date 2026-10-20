@@ -1,7 +1,6 @@
 package cms
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -11,18 +10,26 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
-func (a *App) settingJSON(ctx context.Context, key string) (Obj, error) {
+// settingJSON is a key as the API shows it: its secrets masked, and its
+// bearer addresses too for who can't change them.
+func (a *App) settingJSON(c *Ctx, key string) (Obj, error) {
 	var id int64
 	var data store.JSON
 	var created, updated store.Time
-	err := a.store.QueryRowContext(ctx, `SELECT id, data, created_at, updated_at FROM settings WHERE key = ?`, key).Scan(&id, &data, &created, &updated)
+	err := a.store.QueryRowContext(c.R.Context(), `SELECT id, data, created_at, updated_at FROM settings WHERE key = ?`, key).Scan(&id, &data, &created, &updated)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apierr.NotFound("No setting " + key + ".")
 		}
 		return nil, err
 	}
-	return O("id", id, "key", key, "created_at", created, "updated_at", updated, "data", redact(data.Map())), nil
+	m := data.Map()
+	a.openSecrets(m)
+	shown := redact(m)
+	if !c.can("settings:write") {
+		shown = redactURLs(shown)
+	}
+	return O("id", id, "key", key, "created_at", created, "updated_at", updated, "data", shown), nil
 }
 
 func (a *App) listSettings(c *Ctx) error {
@@ -35,7 +42,7 @@ func (a *App) listSettings(c *Ctx) error {
 	}
 	out := []Obj{}
 	for _, k := range keys {
-		o, err := a.settingJSON(c.R.Context(), k)
+		o, err := a.settingJSON(c, k)
 		if isNotFound(err) {
 			continue // deleted since the list was read
 		} else if err != nil {
@@ -53,7 +60,7 @@ func (a *App) showSetting(c *Ctx) error {
 	key := c.Param("key")
 	// The frontend's repo lives under settings/github; reading an unset
 	// key is {} rather than a 404, so `librepublish get_setting --key github` answers.
-	o, err := a.settingJSON(c.R.Context(), key)
+	o, err := a.settingJSON(c, key)
 	if err != nil {
 		if e, ok := errors.AsType[*apierr.Error](err); ok && e.Status == 404 {
 			o = O("id", nil, "key", key, "created_at", nil, "updated_at", nil, "data", map[string]any{})
@@ -62,6 +69,41 @@ func (a *App) showSetting(c *Ctx) error {
 		}
 	}
 	return c.JSON(200, O("setting", o))
+}
+
+// systemSettings are the keys only the Administrator role changes: where
+// mail goes (and so a password reset link), and what the site is built
+// from and with.
+var systemSettings = map[string]bool{"email": true, "github": true, "deploy": true}
+
+// needSettingAccess refuses a write to a system setting, or to the CMS's
+// address (what reset links point at), by anyone but an Administrator. A
+// write that leaves the address as it is, as a whole General form does,
+// is anyone's with settings:write.
+func (a *App) needSettingAccess(c *Ctx, key string, data map[string]any, replace bool) error {
+	if c.Actor != nil && c.Actor.Role != nil && c.Actor.Role.System {
+		return nil
+	}
+	refuse := &apierr.Error{Status: 403, Code: "forbidden", Message: "Only the Administrator role can change Settings › " + key + ".", Capability: wildcard}
+	if systemSettings[key] {
+		return refuse
+	}
+	if key != "general" {
+		return nil
+	}
+	v, given := data["cms_url"]
+	if !given && !replace {
+		return nil
+	}
+	was, err := a.setting(c.R.Context(), "general")
+	if err != nil {
+		return err
+	}
+	if u, err := cleanCMSURL(str(v)); err != nil || u != str(was["cms_url"]) {
+		refuse.Message = "Only the Administrator role can change the CMS's address."
+		return refuse
+	}
+	return nil
 }
 
 func (a *App) writeSetting(c *Ctx, key string, replace bool) error {
@@ -85,10 +127,13 @@ func (a *App) writeSetting(c *Ctx, key string, replace bool) error {
 	if d, ok := data["data"].(map[string]any); ok {
 		data = d
 	}
+	if err := a.needSettingAccess(c, key, data, replace); err != nil {
+		return err
+	}
 	if _, err := a.putSetting(c.R.Context(), c.Actor, key, data, replace); err != nil {
 		return err
 	}
-	o, err := a.settingJSON(c.R.Context(), key)
+	o, err := a.settingJSON(c, key)
 	if err != nil {
 		return err
 	}
@@ -109,10 +154,13 @@ func (a *App) createSetting(c *Ctx) error {
 	if key == "" {
 		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"key": {"can't be blank"}}}
 	}
+	if err := a.needSettingAccess(c, key, data, true); err != nil {
+		return err
+	}
 	if _, err := a.putSetting(c.R.Context(), c.Actor, key, data, true); err != nil {
 		return err
 	}
-	o, err := a.settingJSON(c.R.Context(), key)
+	o, err := a.settingJSON(c, key)
 	if err != nil {
 		return err
 	}
@@ -125,6 +173,9 @@ func (a *App) updateSetting(c *Ctx) error {
 
 func (a *App) destroySetting(c *Ctx) error {
 	if err := c.Need("settings:write"); err != nil {
+		return err
+	}
+	if err := a.needSettingAccess(c, c.Param("key"), nil, false); err != nil {
 		return err
 	}
 	if _, err := a.store.ExecContext(c.R.Context(), `DELETE FROM settings WHERE key = ? AND key != 'general'`, c.Param("key")); err != nil {

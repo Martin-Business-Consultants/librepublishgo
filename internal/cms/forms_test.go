@@ -483,6 +483,14 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	}
 	form["hook_secret"] = "***cret"
 	s.must(200, s.do(s.admin, "POST", "/api/x/forms/form?id=quote", map[string]any{"form": form}))
+	// ...sealed in the plugin's storage.
+	var stored string
+	if err := s.app.store.QueryRowContext(t.Context(), `SELECT value FROM plugin_kv WHERE key = 'form:quote'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, "s3cret") || !strings.Contains(stored, secret.SealedPrefix) {
+		t.Fatalf("hook secret at rest: %s", stored)
+	}
 	// The site sees each field's condition.
 	r = s.must(200, s.do("", "GET", "/api/x/forms/definition?form=quote", nil))
 	if dig(r.Body, "form", "fields", 3, "show_if", "field") != "service" || dig(r.Body, "form", "fields", 4, "show_if", "values", 0) != "Move It" {

@@ -73,7 +73,7 @@ func (a *App) deliveryRoutes(mux *http.ServeMux) {
 // ---- serving -------------------------------------------------------------
 
 func (a *App) servingMode() string {
-	switch m := str(a.general(context.Background())["serving"]); m {
+	switch m := str(a.general(a.ctx)["serving"]); m {
 	case "website_api", "api_only":
 		return m
 	case "website":
@@ -83,7 +83,7 @@ func (a *App) servingMode() string {
 }
 
 func (a *App) servesPages() bool {
-	return a.servingMode() == "api_only" || boolOf(a.general(context.Background())["api_pages"])
+	return a.servingMode() == "api_only" || boolOf(a.general(a.ctx)["api_pages"])
 }
 
 func (a *App) servesCollection(col *Collection) bool {

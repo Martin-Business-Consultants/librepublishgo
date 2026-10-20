@@ -94,10 +94,10 @@ type App struct {
 	deploys *deploy.Debouncer
 	plugins *plugin.Host
 
-	// Who hears of changes, and what a settings key's data goes through
-	// before it's written (events.go).
-	listeners     []listener
-	beforeSetting map[string]func(data map[string]any)
+	// Who hears of changes (events.go).
+	listeners []listener
+	// Settings › General, as last read (settings.go).
+	generalCache settingCache
 	// The routes, and the agent tools declared on them (agent.go).
 	mux   *http.ServeMux
 	tools []*toolSpec
@@ -191,6 +191,9 @@ func NewApp(cfg Config) (*App, error) {
 // Start loads the plugins (installing the ones the binary ships) and starts
 // the scheduler. One-off commands open an App without it.
 func (a *App) Start(ctx context.Context) error {
+	if err := a.sealStoredSecrets(ctx); err != nil {
+		a.log.Warn("sealing settings' secrets", "err", err)
+	}
 	if err := a.plugins.LoadAll(ctx); err != nil {
 		a.log.Warn("plugins", "err", err)
 	}

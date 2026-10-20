@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 func (a *App) search(c *Ctx) error {
@@ -54,12 +55,22 @@ func (a *App) search(c *Ctx) error {
 		}
 	}
 	if c.can("globals:read") {
-		globals, err := a.globals(ctx, "(name LIKE ? OR slug LIKE ? OR data LIKE ?) LIMIT 10", like, like, like)
+		globals, err := a.globals(ctx, "(name LIKE ? OR slug LIKE ? OR data LIKE ?) LIMIT 100", like, like, like)
 		if err != nil {
 			return err
 		}
+		found := 0
 		for _, g := range globals {
-			results = append(results, O("type", "global", "id", g.ID, "title", g.Name, "path", g.Slug, "snippet", snippet(string(g.Data), q)))
+			// Matched and quoted as a global is shown (redact): a search
+			// mustn't find, or spell out, a key it holds.
+			text := string(store.MustJSON(redact(g.Data.Map())))
+			if !containsFold(g.Name, q) && !containsFold(g.Slug, q) && !containsFold(text, q) {
+				continue
+			}
+			results = append(results, O("type", "global", "id", g.ID, "title", g.Name, "path", g.Slug, "snippet", snippet(text, q)))
+			if found++; found == 10 {
+				break
+			}
 		}
 	}
 	if c.can("assets:read") {
@@ -74,6 +85,8 @@ func (a *App) search(c *Ctx) error {
 	c.Summary = fmt.Sprintf("%d results for %q.", len(results), q)
 	return c.JSON(200, O("query", q, "results", results, "total", len(results)))
 }
+
+func containsFold(s, q string) bool { return strings.Contains(strings.ToLower(s), strings.ToLower(q)) }
 
 func snippet(text, q string) string {
 	i := strings.Index(strings.ToLower(text), strings.ToLower(q))

@@ -93,6 +93,19 @@ func (s *Key) Seal(plain string) string {
 	return SealedPrefix + base64.RawStdEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plain), nil))
 }
 
+// Sealed is whether v is a value Seal made, under any key.
+func Sealed(v string) bool { return strings.HasPrefix(v, SealedPrefix) }
+
+// Reveal is v's plaintext: v itself when it isn't sealed (a value kept
+// before it was), "" when another key sealed it.
+func (s *Key) Reveal(v string) string {
+	if !Sealed(v) {
+		return v
+	}
+	plain, _ := s.Open(v)
+	return plain
+}
+
 // Open returns the plaintext, ok false for a value this key didn't seal.
 func (s *Key) Open(sealed string) (string, bool) {
 	if !strings.HasPrefix(sealed, SealedPrefix) {

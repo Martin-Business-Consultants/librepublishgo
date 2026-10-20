@@ -9,6 +9,7 @@ import (
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
@@ -75,6 +76,17 @@ func (e pluginEnv) Deliver(ctx context.Context, event string, data any) {
 	e.a.hooks.Deliver(ctx, event, data)
 	e.a.plugins.Emit(ctx, event, data)
 }
+
+// Seal encrypts a plugin's secret with the install's key.
+func (e pluginEnv) Seal(plain string) string {
+	if plain == "" || secret.Sealed(plain) {
+		return plain
+	}
+	return e.a.secrets.Seal(plain)
+}
+
+// Reveal is a plugin's secret as it was before Seal.
+func (e pluginEnv) Reveal(v string) string { return e.a.secrets.Reveal(v) }
 
 // Content answers a plugin's query for live content, as the delivery API
 // shows it.

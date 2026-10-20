@@ -125,10 +125,15 @@ func revisionCap(recordType, verb string) string {
 	return prefix + ":" + verb
 }
 
-// JSON is the revision as the API answers it.
+// JSON is the revision as the API answers it: a global's changes with
+// their secrets masked, as the global itself shows them.
 func (r *Revision) JSON() Obj {
+	var changes any = r.Changes
+	if r.RecordType == "Global" {
+		changes = redact(r.Changes.Map())
+	}
 	return O("id", r.ID, "record_type", r.RecordType, "record_id", r.RecordID, "record_label", r.RecordLabel, "fields", r.Fields,
-		"changes", r.Changes, "status", r.Status, "author", r.AuthorLabel, "note", r.Note, "decided_at", r.DecidedAt, "created_at", r.CreatedAt)
+		"changes", changes, "status", r.Status, "author", r.AuthorLabel, "note", r.Note, "decided_at", r.DecidedAt, "created_at", r.CreatedAt)
 }
 
 // settleRevision approves (applying the change as the reviewer) or rejects.
