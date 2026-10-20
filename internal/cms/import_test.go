@@ -150,7 +150,7 @@ func TestMaintenanceDuringReplace(t *testing.T) {
 	if r.Status != http.StatusServiceUnavailable || r.Body["error"] != "maintenance" || r.Header.Get("Retry-After") == "" {
 		t.Fatalf("during: %d %s", r.Status, r.Raw)
 	}
-	if r := s.do("", "GET", "/cms/", nil); r.Status != http.StatusServiceUnavailable {
+	if r := s.do("", "GET", "/", nil); r.Status != http.StatusServiceUnavailable {
 		t.Fatalf("admin during: %d", r.Status)
 	}
 	if r := s.do("", "GET", "/up", nil); r.Status != http.StatusOK {

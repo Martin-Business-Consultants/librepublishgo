@@ -7,7 +7,7 @@ import tailwindcss from "@tailwindcss/vite";
 // `npm run build` here, then `go build`, and the admin ships inside the one
 // executable. `npm run dev` proxies the API to a running librepublish.
 export default defineConfig({
-  base: "/cms/",
+  base: "/",
   plugins: [svelte(), tailwindcss()],
   resolve: {
     alias: { $lib: path.resolve("./src/lib") },

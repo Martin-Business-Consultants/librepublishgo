@@ -75,4 +75,4 @@ echo "Installed $("$dir/librepublish" version) at $dir/librepublish"
 case ":$PATH:" in *":$dir:"*) ;; *) echo "Add $dir to your PATH to run it as \`librepublish\`." ;; esac
 echo
 echo "Start it:  librepublish serve --data ./data"
-echo "Then open http://localhost:8080/cms/ and make the first administrator."
+echo "Then open http://localhost:8080/ and make the first administrator."

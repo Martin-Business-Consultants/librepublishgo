@@ -344,7 +344,7 @@ func serve(ctx context.Context, stop func(), args []string) (err error) {
 	}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
-	cfg.Logger.Info("libre publish is up", "version", version, "admin", app.App().BaseURL()+"/cms/", "data", cfg.DataDir, "addr", ln.Addr().String())
+	cfg.Logger.Info("libre publish is up", "version", version, "admin", app.App().BaseURL()+"/", "data", cfg.DataDir, "addr", ln.Addr().String())
 	// Serving: a release being tried has come up (update.Confirm).
 	update.Confirm(cfg.DataDir, version)
 
@@ -423,7 +423,7 @@ func user(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Created user %d (%s), %s. Sign in at %s/cms/\n", id, email, role, app.BaseURL())
+		fmt.Printf("Created user %d (%s), %s. Sign in at %s/\n", id, email, role, app.BaseURL())
 		return nil
 	})
 }

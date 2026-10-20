@@ -81,7 +81,7 @@ func (a *App) fileRevision(ctx context.Context, actor *Actor, recordType string,
 }
 
 func (a *App) reviewURL(id int64) string {
-	return a.BaseURL() + "/cms/#/revisions/" + strconv.FormatInt(id, 10)
+	return a.BaseURL() + "/#/revisions/" + strconv.FormatInt(id, 10)
 }
 
 // heldJSON is the 202 the CLI and agents read.

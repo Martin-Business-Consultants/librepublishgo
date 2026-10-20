@@ -10,7 +10,7 @@
 #
 # Settings are environment variables (README): APP_URL, SECRET_KEY,
 # TRUST_PROXY=1 behind the host's proxy, PORT (80 here), LOG_FORMAT.
-# The first admin: the setup screen at /cms/ on a fresh install, or
+# The first admin: the setup screen at / on a fresh install, or
 # `docker exec -it <container> librepublish user create --email … --name … --password -`.
 # Health check: GET /up.
 

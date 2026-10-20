@@ -39,7 +39,7 @@ func (a *App) deviceCode(c *Ctx) error {
 		return err
 	}
 	return c.JSON(200, O("status", "ok", "user_code", string(code), "device_code", device,
-		"verification_url", a.BaseURL()+"/cms/#/connect?code="+string(code), "interval", devicePollInterval,
+		"verification_url", a.BaseURL()+"/#/connect?code="+string(code), "interval", devicePollInterval,
 		"expires_in", int(time.Until(expires.Time).Seconds()), "account", a.tenant()))
 }
 

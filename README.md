@@ -7,7 +7,7 @@ Linux, macOS and Windows.
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/main/install.sh | sh
 librepublish serve --data ./data
-# open http://localhost:8080/cms/ and make the first administrator
+# open http://localhost:8080/ and make the first administrator
 ```
 
 That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no

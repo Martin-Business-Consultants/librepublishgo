@@ -31,7 +31,7 @@ const (
 
 // adminLink is an address in the admin (its hash route), for an email.
 func (a *App) adminLink(route string) string {
-	return strings.TrimRight(a.BaseURL(), "/") + "/cms/#" + route
+	return strings.TrimRight(a.BaseURL(), "/") + "/#" + route
 }
 
 func (a *App) siteName(ctx context.Context) string {

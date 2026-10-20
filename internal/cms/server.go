@@ -66,7 +66,8 @@ type Config struct {
 	Logger     *slog.Logger
 	// Mailer sends email; SMTP from Settings › Email when nil.
 	Mailer Mailer
-	// Admin serves /cms/ when set.
+	// Admin serves the install's root (/, /assets/, and /cms redirected
+	// there) when set.
 	Admin http.Handler
 	// NoDefaultPlugins leaves out the plugins the binary ships (tests).
 	NoDefaultPlugins bool
@@ -689,15 +690,18 @@ func (a *App) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte("User-agent: *\nDisallow: /\n"))
 	})
-	if a.cfg.Admin != nil {
-		mux.Handle("/cms/", a.cfg.Admin)
-	}
-	// "/" is blank: a headless install's own address shows nothing, not even
-	// where the admin is. Any other /api path is the API's 404, in its shape.
+	// The CMS is headless, so its own address is the admin: / is the app,
+	// /assets/ its files, and /cms (where it was) redirects to /. Without
+	// an admin, / is blank. Any other /api path is the API's 404, in its
+	// shape.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api" {
 			c := &Ctx{App: a, W: w, R: r}
 			c.fail(apierr.NotFound("No route matches " + r.Method + " " + r.URL.Path + "."))
+			return
+		}
+		if a.cfg.Admin != nil {
+			a.cfg.Admin.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path == "/" {
@@ -822,7 +826,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		if strings.HasPrefix(r.URL.Path, "/cms") {
+		// The admin (/ and its assets) is never framed; files and the API
+		// may be embedded by the site.
+		if !strings.HasPrefix(r.URL.Path, "/files/") && !strings.HasPrefix(r.URL.Path, "/api") {
 			h.Set("X-Frame-Options", "DENY")
 		}
 		next.ServeHTTP(w, r)
