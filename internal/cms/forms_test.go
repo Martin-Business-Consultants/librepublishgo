@@ -530,6 +530,43 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	if dig(r.Body, "deliveries", 0, "payload", "service_type") != "keep-it" {
 		t.Fatalf("deliveries: %s", r.Raw)
 	}
+	// A preview is the delivery the latest real submission made, exactly,
+	// and sends nothing.
+	r = s.must(200, s.do(s.admin, "POST", "/api/webhooks/"+stellaID+"/preview", nil))
+	if r.Body["event"] != "submission.created" || r.Body["data_from"] != "delivery" || r.Body["body_text"] != string(crmBodies[0]) ||
+		dig(r.Body, "headers", "Content-Type") != "application/json" || dig(r.Body, "headers", "X-Cms-Signature") != nil {
+		t.Fatalf("preview: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "POST", "/api/webhooks/"+stellaID+"/preview", map[string]any{"event": "submission.created",
+		"data": map[string]any{"form": "quote", "values": map[string]any{"service": "Move It", "zip": "1"}}}))
+	if r.Body["data_from"] != "given" || dig(r.Body, "body", "service_type") != "move-it" || dig(r.Body, "body", "email") != "" {
+		t.Fatalf("preview with data: %s", r.Raw)
+	}
+	// A test goes to the testing URL, never the service, and is logged as a
+	// test that doesn't change how the webhook is doing.
+	s.must(422, s.do(s.admin, "POST", "/api/webhooks/"+stellaID+"/test", map[string]any{"to": "testing"}))
+	var caught [][]byte
+	catcher := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		caught = append(caught, b)
+		mu.Unlock()
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer catcher.Close()
+	s.must(200, s.do(s.admin, "PATCH", "/api/webhooks/"+stellaID, map[string]any{"webhook": map[string]any{"testing_url": catcher.URL}}))
+	r = s.must(200, s.do(s.admin, "POST", "/api/webhooks/"+stellaID+"/test", map[string]any{"event": "submission.created", "to": "testing"}))
+	if r.Body["ok"] != false || r.Body["sent_to"] != catcher.URL || len(caught) != 1 || string(caught[0]) != string(crmBodies[0]) || len(crmBodies) != 1 {
+		t.Fatalf("test: %s, caught %q", r.Raw, caught)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/webhooks/"+stellaID, nil))
+	if dig(r.Body, "webhook", "failure_count") != 0.0 || dig(r.Body, "webhook", "testing_url") != catcher.URL {
+		t.Fatalf("a test changed its status: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/webhooks/"+stellaID+"/deliveries", nil))
+	if dig(r.Body, "deliveries", 0, "test") != true || dig(r.Body, "deliveries", 1, "test") != false {
+		t.Fatalf("test deliveries: %s", r.Raw)
+	}
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
 	id := str(dig(r.Body, "submissions", 0, "id"))
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submission?id="+id, nil))
@@ -560,4 +597,75 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	if !strings.Contains(string(r.Raw), "failed: HTTP 502") {
 		t.Fatalf("noted: %s", r.Raw)
 	}
+}
+
+// Send test emails a form as it is in the editor to its testing addresses
+// only, with sample answers; nothing is kept and nobody else hears of it.
+func TestFormsSendTest(t *testing.T) {
+	t.Parallel()
+	mailer := &captureMailer{}
+	s := newSiteWith(t, Config{Mailer: mailer})
+	var hooked, delivered int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if r.URL.Path == "/hook" {
+			hooked++
+		} else {
+			delivered++
+		}
+		mu.Unlock()
+	}))
+	defer srv.Close()
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/email", map[string]any{"setting": map[string]any{"data": map[string]any{
+		"smtp_host": "smtp.acme.test", "from_name": "Acme", "from_email": "hello@acme.test"}}}))
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/general", map[string]any{"setting": map[string]any{"data": map[string]any{
+		"title": "Acme", "site_base_url": "https://acme.test", "cors_origins": srv.URL}}}))
+	s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": map[string]any{"name": "all", "url": srv.URL, "events": []any{"*"}}}))
+	form := map[string]any{
+		"name": "Quote", "slug": "quote", "status": "active", "store_submissions": true,
+		"fields": []any{
+			map[string]any{"type": "radio", "name": "service", "label": "Service", "options": []any{"Keep It", "Move It"}},
+			map[string]any{"type": "text", "name": "to_zip", "label": "Destination zip", "show_if": map[string]any{"field": "service", "values": []any{"Move It"}}},
+			map[string]any{"type": "text", "name": "first_name", "label": "First name"},
+			map[string]any{"type": "email", "name": "email", "label": "Email", "required": true},
+		},
+		"admin_enabled": true, "admin_to": []any{"owner@client.test"}, "admin_cc": []any{"boss@client.test"}, "admin_subject": "Quote from {{ first_name }}",
+		"client_enabled": true, "client_to_field": "email", "client_subject": "Thanks",
+		"hook_url": srv.URL + "/hook", "hook_secret": "s3cret",
+	}
+	s.must(200, s.do(s.admin, "POST", "/api/x/forms/form", map[string]any{"form": form}))
+	// It needs somewhere to send.
+	r := s.must(422, s.do(s.admin, "POST", "/api/x/forms/form/test?id=quote", map[string]any{"form": form}))
+	if dig(r.Body, "errors", "testing_to", 0) == nil {
+		t.Fatalf("no testing address: %s", r.Raw)
+	}
+	// The form as edited, not as saved: its testing addresses aren't saved.
+	form["testing_to"] = []any{"me@agency.test"}
+	form["testing_bcc"] = []any{"qa@agency.test"}
+	form["admin_subject"] = "Edited {{ first_name }}"
+	r = s.must(200, s.do(s.admin, "POST", "/api/x/forms/form/test?id=quote", map[string]any{"form": form}))
+	if !strings.Contains(str(r.Body["message"]), "me@agency.test") {
+		t.Fatalf("test: %s", r.Raw)
+	}
+	got := mailer.take()
+	if len(got) != 2 {
+		t.Fatalf("mails: %d", len(got))
+	}
+	admin, client := got[0], got[1]
+	if !slices.Equal(admin.to, []string{"me@agency.test", "qa@agency.test"}) || !strings.Contains(admin.raw, "Subject: [Test] Edited Sample First name") ||
+		strings.Contains(admin.raw, "client.test") || strings.Contains(admin.raw, "Destination zip") || !strings.Contains(admin.raw, "Keep It") {
+		t.Fatalf("admin mail to %v:\n%s", admin.to, admin.raw)
+	}
+	if !slices.Equal(client.to, []string{"me@agency.test"}) || !strings.Contains(client.raw, "Subject: [Test] Thanks") {
+		t.Fatalf("client mail to %v:\n%s", client.to, client.raw)
+	}
+	s.app.hooks.Wait()
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
+	if rows, _ := r.Body["submissions"].([]any); len(rows) != 0 || hooked != 0 || delivered != 0 {
+		t.Fatalf("kept %s, hooked %d, delivered %d", r.Raw, hooked, delivered)
+	}
+	// Neither email on: nothing to test.
+	form["admin_enabled"], form["client_enabled"] = false, false
+	s.must(422, s.do(s.admin, "POST", "/api/x/forms/form/test?id=quote", map[string]any{"form": form}))
 }

@@ -183,7 +183,11 @@ Its query string (`#/plugins/<key>/<id>?id=…`) is passed to `source`.
   types, or `{title, readonly: "<key>"}` for items to show. Plugins add
   `form_builder` (a visual builder over `palette: [{type, label, icon,
   input, props}]`), `password`, and `select` with `options_from: {builder,
-  types}` (choices taken from the record's builder fields).
+  types}` (choices taken from the record's builder fields). A section's
+  `actions` (`[{label, icon, post, send: "record", help, confirm}]`) are
+  buttons under its fields that POST the record as it is in the editor,
+  saved or not (Forms' Send test); a 422's `errors` mark the fields, and the
+  answer's `message` is shown.
 - **detail**: `record`, `main` and `side` sections of `items`
   (`[{label, value, href, multiline, time, badge, tone, screen, params}]`),
   and `actions` (`post` actions, with `hide_if`/`show_if` on the record and

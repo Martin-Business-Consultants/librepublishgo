@@ -52,6 +52,7 @@ func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("PUT /api/webhooks/{id}", a.updateWebhook)
 	h("DELETE /api/webhooks/{id}", a.destroyWebhook)
 	h("POST /api/webhooks/{id}/rotate_secret", a.rotateWebhookSecret)
+	h("POST /api/webhooks/{id}/preview", a.previewWebhook)
 	h("POST /api/webhooks/{id}/test", a.testWebhook)
 	h("GET /api/webhooks/{id}/deliveries", a.webhookDeliveries)
 

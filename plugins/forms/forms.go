@@ -46,6 +46,13 @@ type Form struct {
 	ClientFromName  string `json:"client_from_name"`
 	ClientFromEmail string `json:"client_from_email"`
 
+	// Testing: where Send test sends the emails instead (testing.go). The
+	// confirmation goes to TestingClientTo, else the first of TestingTo.
+	TestingTo       []string `json:"testing_to"`
+	TestingCc       []string `json:"testing_cc"`
+	TestingBcc      []string `json:"testing_bcc"`
+	TestingClientTo string   `json:"testing_client_to"`
+
 	SubmitLabel    string `json:"submit_label"`
 	SuccessMessage string `json:"success_message"`
 	RedirectURL    string `json:"redirect_url"`
@@ -384,7 +391,8 @@ func validateForm(f *Form) map[string][]string { //nolint:gocyclo // one check a
 		return out
 	}
 	f.AdminTo, f.AdminCc, f.AdminBcc = checkList("admin_to", f.AdminTo), checkList("admin_cc", f.AdminCc), checkList("admin_bcc", f.AdminBcc)
-	for k, v := range map[string]string{"admin_from_email": f.AdminFromEmail, "client_from_email": f.ClientFromEmail, "client_reply_to": f.ClientReplyTo} {
+	f.TestingTo, f.TestingCc, f.TestingBcc = checkList("testing_to", f.TestingTo), checkList("testing_cc", f.TestingCc), checkList("testing_bcc", f.TestingBcc)
+	for k, v := range map[string]string{"admin_from_email": f.AdminFromEmail, "client_from_email": f.ClientFromEmail, "client_reply_to": f.ClientReplyTo, "testing_client_to": f.TestingClientTo} {
 		if strings.TrimSpace(v) != "" && !emailFormat.MatchString(strings.TrimSpace(v)) {
 			add(k, "isn't an email address")
 		}

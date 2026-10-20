@@ -92,6 +92,23 @@ takes only the quote form's submissions. Each is a path, as above, and the
 values it may have (any of a list's); every condition on the event must
 hold. An event without conditions is taken whole.
 
+## Testing
+
+**Test webhook** (`POST /api/webhooks/<id>/preview`, `{event, data}`, both
+optional) shows the delivery an event would make, exactly: its URL, headers
+(the webhook's own masked) and body, byte for byte. It sends nothing. The
+data is the latest of that event delivered that the webhook takes, or, with
+none yet, a sample shaped to it: every path its body reads filled in, and
+its conditions met. Edit it and preview again.
+
+A webhook's **testing URL** (`testing_url`; a request catcher, a staging
+copy) is where a test is sent, so the real receiver never sees it:
+`POST /api/webhooks/<id>/test` with `{"event", "data", "to": "testing"}`.
+`"to": "live"` (the default) sends it to the webhook's own URL. A test is
+logged in Deliveries, marked Test, and doesn't change whether the webhook is
+shown as failing. With no body, the test is the `webhook.test` event, as
+before.
+
 ## schema.changed
 
 ```json

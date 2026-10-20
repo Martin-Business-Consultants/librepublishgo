@@ -521,6 +521,48 @@
                   "title": "User Confirmation"
                 },
                 {
+                  "id": "testing",
+                  "sections": [
+                    {
+                      "actions": [
+                        {
+                          "help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. Nothing is kept, and the hook and webhooks aren't told.",
+                          "icon": "send",
+                          "label": "Send test",
+                          "post": "/form/test",
+                          "send": "record"
+                        }
+                      ],
+                      "fields": [
+                        {
+                          "help": "Where a test sends the submission email, in place of Admin Confirmation's addresses: see an email without bothering the people who get the real ones.",
+                          "label": "Send to",
+                          "name": "testing_to",
+                          "type": "string_list"
+                        },
+                        {
+                          "label": "Cc",
+                          "name": "testing_cc",
+                          "type": "string_list"
+                        },
+                        {
+                          "label": "Bcc",
+                          "name": "testing_bcc",
+                          "type": "string_list"
+                        },
+                        {
+                          "help": "Where a test sends the visitor's confirmation. Blank: the first Send to address.",
+                          "label": "Send the confirmation to",
+                          "name": "testing_client_to",
+                          "type": "string"
+                        }
+                      ],
+                      "title": "Send a test"
+                    }
+                  ],
+                  "title": "Testing"
+                },
+                {
                   "id": "spam",
                   "sections": [
                     {
@@ -924,6 +966,13 @@
         },
         {
           "capability": "forms:write",
+          "export": "test_form",
+          "method": "POST",
+          "path": "/form/test",
+          "public": false
+        },
+        {
+          "capability": "forms:write",
           "export": "delete_form",
           "method": "POST",
           "path": "/form/delete",
@@ -966,7 +1015,7 @@
         }
       ],
       "updated_at": "2026-01-01T00:00:00.000Z",
-      "version": "1.2.0"
+      "version": "1.3.0"
     }
   ]
 }

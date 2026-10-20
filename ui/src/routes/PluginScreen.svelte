@@ -22,10 +22,10 @@
   import CopyButton from "../lib/components/CopyButton.svelte";
   import FieldsForm from "../lib/fields/FieldsForm.svelte";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import { get, post } from "../lib/api.js";
+  import { get, post, ApiError } from "../lib/api.js";
   import { save, saveShortcut } from "../lib/save.js";
   import { confirm } from "../lib/confirm.svelte.js";
-  import { toast, toastError } from "../lib/toast.svelte.js";
+  import { toast, toasts, toastError } from "../lib/toast.svelte.js";
   import { router, href, withQuery } from "../lib/router.svelte.js";
   import { pluginAdmin } from "../lib/plugins.svelte.js";
   import { onDestroy } from "svelte";
@@ -87,6 +87,23 @@
       else if (r.res?.[screen.form.record]) data = { ...data, [screen.form.record]: r.res[screen.form.record] };
     }
   }
+  // A section's action posts the record as it is in the editor, saved or
+  // not ({"send": "record"}): Send test. Its errors show on the fields.
+  let running = $state("");
+  async function runSectionAction(a) {
+    if (running || !canWrite(a.post)) return;
+    if (a.confirm && !(await confirm({ title: a.label + "?", message: a.confirm, confirmLabel: a.label }))) return;
+    running = a.post;
+    try {
+      const body = a.send === "record" ? { [screen.form.record]: $state.snapshot(record) } : a.body || {};
+      const r = await post(route(a.post, isNew ? {} : { id: query.id }), body);
+      errors = {};
+      toast(r?.message || "Done.");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 422) { errors = e.errors || {}; toasts.show(e.body?.message && e.body.message !== "Validation failed" ? e.body.message : "Some fields need attention.", "danger"); }
+      else toastError(e);
+    } finally { running = ""; }
+  }
   const stop = saveShortcut(submit);
   onDestroy(stop);
 
@@ -102,6 +119,15 @@
   {:else if it.tone}<span class={it.tone === "danger" ? "text-destructive" : "text-emerald-700 dark:text-emerald-400"}>{it.value}</span>
   {:else if it.multiline}<p class="whitespace-pre-wrap break-words">{it.value || "—"}</p>
   {:else}<span class="break-words">{it.value || "—"}</span>{/if}
+{/snippet}
+
+{#snippet sectionActions(sec)}
+  {#each (sec.actions || []).filter((a) => canWrite(a.post)) as a}
+    <div class="mt-6 flex flex-wrap items-center gap-3 border-t pt-4">
+      <Button icon={a.icon} loading={running === a.post} onclick={() => runSectionAction(a)}>{a.label}</Button>
+      {#if a.help}<p class="text-muted-foreground max-w-prose flex-1 text-xs">{a.help}</p>{/if}
+    </div>
+  {/each}
 {/snippet}
 
 {#snippet items(list, side = false)}
@@ -194,9 +220,9 @@
             {#if sec.readonly}
               {#if record[sec.readonly]}<Panel title={sec.title}><div class="p-6">{@render items(record[sec.readonly])}</div></Panel>{/if}
             {:else if sec.title}
-              <Panel title={sec.title}><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} /></div></Panel>
+              <Panel title={sec.title}><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} />{@render sectionActions(sec)}</div></Panel>
             {:else}
-              <Panel><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} /></div></Panel>
+              <Panel><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} />{@render sectionActions(sec)}</div></Panel>
             {/if}
           {/each}
         </Tabs.Content>
@@ -205,12 +231,12 @@
   {:else if screen.form && record}
     {@const fm = screen.form}
     {#each fm.top || [] as sec}
-      <Panel title={sec.title}><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} /></div></Panel>
+      <Panel title={sec.title}><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} />{@render sectionActions(sec)}</div></Panel>
     {/each}
     <div class="flex flex-col gap-6 lg:flex-row lg:items-start">
       <div class="flex min-w-0 flex-1 flex-col gap-6">
         {#each fm.main || [] as sec}
-          <Panel title={sec.title}><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} /></div></Panel>
+          <Panel title={sec.title}><div class="p-6"><FieldsForm fields={sec.fields} data={record} {errors} />{@render sectionActions(sec)}</div></Panel>
         {/each}
       </div>
       <aside class="flex min-w-0 shrink-0 flex-col gap-4 lg:sticky lg:top-16 lg:w-80">
@@ -218,7 +244,7 @@
           {#if sec.readonly}
             {#if record[sec.readonly]}<Postbox key="{key}-{screen.id}-{sec.key}" title={sec.title}>{@render items(record[sec.readonly], true)}</Postbox>{/if}
           {:else}
-            <Postbox key="{key}-{screen.id}-{sec.key}" title={sec.title}><FieldsForm fields={sec.fields} data={record} {errors} gap="gap-4" /></Postbox>
+            <Postbox key="{key}-{screen.id}-{sec.key}" title={sec.title}><FieldsForm fields={sec.fields} data={record} {errors} gap="gap-4" />{@render sectionActions(sec)}</Postbox>
           {/if}
         {/each}
       </aside>

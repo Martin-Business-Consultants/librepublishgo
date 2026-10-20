@@ -6,7 +6,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 // The field types the builder offers. "input" is how the admin previews
 // one; "props" are what its inspector edits.
@@ -108,6 +108,15 @@ func screens() []map[string]any {
 							{"name": "client_from_email", "label": "From address", "type": "string", "help": "Blank: the default in Settings › Email."},
 							{"name": "client_reply_to", "label": "Reply-to address", "type": "string", "help": "Where the visitor's reply goes. Blank: the from address."},
 						}},
+					}},
+					{"id": "testing", "title": "Testing", "sections": []map[string]any{
+						{"title": "Send a test", "fields": []map[string]any{
+							{"name": "testing_to", "label": "Send to", "type": "string_list", "help": "Where a test sends the submission email, in place of Admin Confirmation's addresses: see an email without bothering the people who get the real ones."},
+							{"name": "testing_cc", "label": "Cc", "type": "string_list"},
+							{"name": "testing_bcc", "label": "Bcc", "type": "string_list"},
+							{"name": "testing_client_to", "label": "Send the confirmation to", "type": "string", "help": "Where a test sends the visitor's confirmation. Blank: the first Send to address."},
+						}, "actions": []map[string]any{{"label": "Send test", "icon": "send", "post": "/form/test", "send": "record",
+							"help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. Nothing is kept, and the hook and webhooks aren't told."}}},
 					}},
 					{"id": "spam", "title": "Spam", "sections": []map[string]any{
 						{"title": "Spam protection", "fields": []map[string]any{
@@ -211,6 +220,7 @@ func Module() *plugin.Module {
 				needs(r("GET", "/form", "show_form"), read),
 				needs(r("POST", "/form", "save_form"), write),
 				needs(r("POST", "/form/duplicate", "duplicate_form"), write),
+				needs(r("POST", "/form/test", "test_form"), write),
 				needs(r("POST", "/form/delete", "delete_form"), write),
 				needs(r("GET", "/submissions", "list_submissions"), read),
 				needs(r("GET", "/submissions.csv", "export_submissions"), read),
@@ -232,6 +242,7 @@ func Module() *plugin.Module {
 			"show_form":             handle((*call).showForm),
 			"save_form":             handle((*call).saveForm),
 			"duplicate_form":        handle((*call).duplicateForm),
+			"test_form":             handle((*call).testForm),
 			"delete_form":           handle((*call).deleteForm),
 			"list_submissions":      handle((*call).listSubmissions),
 			"export_submissions":    handle((*call).exportSubmissions),

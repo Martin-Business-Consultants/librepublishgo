@@ -18,6 +18,7 @@
   import Select from "../lib/components/Select.svelte";
   import Tabs from "../lib/components/Tabs.svelte";
   import TagInput from "../lib/components/TagInput.svelte";
+  import Textarea from "../lib/components/Textarea.svelte";
   import Badge from "../lib/components/Badge.svelte";
   import Time from "../lib/components/Time.svelte";
   import SecretBox from "../lib/components/SecretBox.svelte";
@@ -54,16 +55,43 @@
   }
   async function submit() {
     const external = editing.kind === "external";
-    const body = { webhook: { name: editing.name, url: editing.url, kind: editing.kind, events: editing.events, active: editing.active,
+    const body = { webhook: { name: editing.name, url: editing.url, testing_url: editing.testing_url || "", kind: editing.kind, events: editing.events, active: editing.active,
       event_filters: filtersOf(editing.filters), body_map: external ? editing.body_map.map((f) => ({ ...f, transform: f.transform || "" })) : [] } };
     const r = await save(() => (editing.id ? patch(`/webhooks/${editing.id}`, body) : post("/webhooks", body)));
     errors = r.errors || {};
     if (r.ok) { open = false; if (!editing.id && !external) { secret = r.res.webhook.secret; secretOpen = true; } load(); }
   }
-  async function test(w) {
-    if (w.kind === "external" && !(await confirm({ title: "Send a test?", message: "The service treats it like a real event: a CRM gets a lead with these fields mostly blank.", confirmLabel: "Send" }))) return;
-    try { const r = await post(`/webhooks/${w.id}/test`); r.ok ? toast(`Delivered (HTTP ${r.response_status}).`) : toasts.show(`Failed: ${r.error || "HTTP " + r.response_status}`, "danger"); load(); } catch (e) { toastError(e); }
+  // Test webhook: the delivery an event would make, exactly (URL, headers,
+  // body), from the latest real one's data or a sample, editable; sent to
+  // the testing URL, or, asked twice, to the real one.
+  let trying = $state(null), tryOpen = $state(false), tryError = $state(""), sending = $state(false);
+  const FROM = { delivery: "The latest of these it took, as it was delivered.", sample: "Made-up data in the event's shape: edit it to look like yours.", given: "Your data." };
+  async function preview(event, data) {
+    tryError = "";
+    try {
+      const r = await post(`/webhooks/${trying.webhook.id}/preview`, data === undefined ? { event } : { event, data });
+      trying = { ...trying, ...r, text: data === undefined ? JSON.stringify(r.data, null, 2) : trying.text };
+    } catch (e) { tryError = e.message; }
   }
+  async function test(w) {
+    trying = { webhook: w, event: "", text: "" };
+    tryOpen = true;
+    await preview("");
+  }
+  function edited() {
+    try { return JSON.parse(trying.text); } catch { tryError = "The data isn't JSON."; return null; }
+  }
+  async function send(to) {
+    const data = edited();
+    if (!data) return;
+    if (to === "live" && !(await confirm({ title: `Send to ${trying.webhook.name}?`, message: trying.webhook.kind === "external" ? "It goes to the real service, which treats it like a real event: a CRM gets a lead." : "It goes to the real receiver, marked as a test in Deliveries.", confirmLabel: "Send" }))) return;
+    sending = true;
+    try {
+      const r = await post(`/webhooks/${trying.webhook.id}/test`, { event: trying.event, data, to });
+      r.ok ? toast(`Sent to ${r.sent_to} (HTTP ${r.response_status}).`) : toasts.show(`Failed: ${r.error || "HTTP " + r.response_status}`, "danger");
+    } catch (e) { toastError(e); } finally { sending = false; }
+  }
+  const tryEvents = (w) => [...new Set([...w.events.filter((e) => e !== "*"), "webhook.test"])];
   async function rotate(w) {
     if (!(await confirm({ title: "Rotate the signing secret?", message: "Deliveries are signed with the new one at once: give it to the receiver.", confirmLabel: "Rotate" }))) return;
     try { secret = (await post(`/webhooks/${w.id}/rotate_secret`)).webhook.secret; secretOpen = true; } catch (e) { toastError(e); }
@@ -87,7 +115,7 @@
         <span class="font-medium text-foreground">{w.name}</span>{#if w.kind === "external"}<Badge class="ml-2">External</Badge>{/if}{#if !w.active}<Badge class="ml-2">Off</Badge>{/if}
         <p class="max-w-sm truncate font-mono text-xs text-muted-foreground">{w.url}</p>
         <RowActions>
-          {#if session.can("webhooks:write")}<RowAction onclick={() => edit(w)}>Edit</RowAction><RowAction onclick={() => test(w)}>Send a test</RowAction>{#if w.kind !== "external"}<RowAction onclick={() => rotate(w)}>Rotate secret</RowAction>{/if}{/if}
+          {#if session.can("webhooks:write")}<RowAction onclick={() => edit(w)}>Edit</RowAction><RowAction onclick={() => test(w)}>Test webhook</RowAction>{#if w.kind !== "external"}<RowAction onclick={() => rotate(w)}>Rotate secret</RowAction>{/if}{/if}
           <RowAction onclick={() => log(w)}>Deliveries</RowAction>
           {#if session.can("webhooks:delete")}<RowAction danger onclick={() => remove(w)}>Delete</RowAction>{/if}
         </RowActions>
@@ -110,6 +138,7 @@
     </div>
     <Field label="Name" error={errors.name}>{#snippet children(id, invalid)}<Input {id} {invalid} bind:value={editing.name} placeholder={editing.kind === "external" ? "Stella" : "Search index"} />{/snippet}</Field>
     <Field label="URL" help={editing.kind === "external" ? "The CMS POSTs the body here as JSON." : "The CMS POSTs each event here, signed X-CMS-Signature: sha256=<HMAC of the body>."} error={errors.url}>{#snippet children(id, invalid)}<Input {id} {invalid} mono icon="link" bind:value={editing.url} placeholder="https://…" />{/snippet}</Field>
+    <Field label="Testing URL" help="Optional. Where Test webhook sends, so you can see a delivery without the real receiver getting it: a request catcher (webhook.site, a RequestBin) or a staging copy." error={errors.testing_url}>{#snippet children(id, invalid)}<Input {id} {invalid} mono icon="link" bind:value={editing.testing_url} placeholder="https://webhook.site/…" />{/snippet}</Field>
     <fieldset class="flex flex-col gap-2">
       <legend class="mb-2 text-sm font-semibold text-foreground">Events</legend>
       <div class="grid gap-2 sm:grid-cols-2">{#each EVENTS as ev}<Checkbox label={ev} checked={editing.events.includes(ev)} onchange={(on) => toggle(ev, on)} />{/each}</div>
@@ -150,6 +179,38 @@
   {#snippet actions()}<Button onclick={() => (open = false)}>Cancel</Button><Button variant="primary" onclick={submit}>Save webhook</Button>{/snippet}
 </Dialog>
 
+<Dialog bind:open={tryOpen} title="Test webhook · {trying?.webhook?.name || ''}" size="xl">
+  {#if trying}
+    <div class="grid gap-6 lg:grid-cols-2">
+      <div class="flex min-w-0 flex-col gap-3">
+        <Field label="Event">{#snippet children(id)}<Select {id} value={trying.event} options={tryEvents(trying.webhook)} onchange={(v) => preview(v)} />{/snippet}</Field>
+        <Field label="Event data" help={FROM[trying.data_from] || ""}>{#snippet children(id)}<Textarea {id} mono rows={18} bind:value={trying.text} />{/snippet}</Field>
+        <div class="flex flex-wrap gap-2">
+          <Button size="sm" icon="refresh" onclick={() => { const d = edited(); if (d) preview(trying.event, d); }}>Preview with this data</Button>
+          <Button size="sm" variant="plain" onclick={() => preview(trying.event)}>Reset</Button>
+        </div>
+        {#if tryError}<p class="text-xs text-destructive">{tryError}</p>{/if}
+      </div>
+      <div class="flex min-w-0 flex-col gap-3">
+        <p class="text-sm font-semibold text-foreground">What it sends</p>
+        <p class="break-all font-mono text-xs"><span class="font-semibold">POST</span> {trying.url}</p>
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 font-mono text-xs">
+          {#each Object.entries(trying.headers || {}).sort() as [k, v]}<dt class="text-muted-foreground">{k}</dt><dd class="break-all">{v}</dd>{/each}
+        </dl>
+        <pre class="max-h-[28rem] overflow-auto rounded-md bg-muted p-3 text-xs">{trying.body ? JSON.stringify(trying.body, null, 2) : trying.body_text}</pre>
+        <p class="text-xs text-muted-foreground">Exactly what's posted{trying.webhook.kind === "external" ? "" : " (delivered_at and the signature are made again when it's sent)"}. Previewing sends nothing.</p>
+      </div>
+    </div>
+  {/if}
+  {#snippet actions()}
+    <Button onclick={() => (tryOpen = false)}>Close</Button>
+    {#if trying && session.can("webhooks:write")}
+      <Button variant="danger" loading={sending} onclick={() => send("live")}>Send to its URL</Button>
+      <Button variant="primary" loading={sending} disabled={!trying.testing_url} title={trying.testing_url ? trying.testing_url : "Add a testing URL in Edit"} onclick={() => send("testing")}>Send to testing URL</Button>
+    {/if}
+  {/snippet}
+</Dialog>
+
 <Dialog bind:open={secretOpen} title="Signing secret" size="sm">
   {#if secret}<SecretBox value={secret} note="Shown once. The receiver checks each delivery's X-CMS-Signature with it." />{/if}
   {#snippet actions()}<Button variant="primary" onclick={() => (secretOpen = false)}>Done</Button>{/snippet}
@@ -159,7 +220,7 @@
   {#if deliveries}
     <DataTable rows={deliveries.list} columns={[{ label: "Event" }, { label: "Result" }, { label: "Time", num: true }, { label: "When" }]} emptyText="Nothing delivered yet.">
       {#snippet row(d)}
-        <Cell mono>{d.event}{#if d.payload}<button type="button" class="ml-2 font-sans text-xs text-primary hover:underline" onclick={() => (shown = shown?.id === d.id ? null : d)}>{shown?.id === d.id ? "Hide body" : "Body"}</button>{/if}</Cell>
+        <Cell mono>{d.event}{#if d.test}<Badge class="ml-2 font-sans">Test</Badge>{/if}{#if d.payload}<button type="button" class="ml-2 font-sans text-xs text-primary hover:underline" onclick={() => (shown = shown?.id === d.id ? null : d)}>{shown?.id === d.id ? "Hide body" : "Body"}</button>{/if}</Cell>
         <Cell>{#if d.success}<Badge tone="success">{d.response_status}</Badge>{:else}<Badge tone="danger">{d.response_status || "Failed"}</Badge><p class="max-w-xs truncate text-xs text-destructive">{d.error}</p>{/if}</Cell>
         <Cell num muted>{d.duration_ms ?? "—"} ms</Cell>
         <Cell muted nowrap><Time value={d.created_at} class="text-xs" /></Cell>

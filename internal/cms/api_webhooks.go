@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
@@ -93,6 +95,9 @@ func (a *App) saveWebhook(c *Ctx, h *webhook.Hook, p map[string]any) (string, er
 	if has(p, "url") {
 		h.URL = strings.TrimSpace(str(p["url"]))
 	}
+	if has(p, "testing_url") {
+		h.TestingURL = strings.TrimSpace(str(p["testing_url"]))
+	}
 	if has(p, "kind") {
 		h.Kind = strings.TrimSpace(str(p["kind"]))
 	}
@@ -123,6 +128,9 @@ func (a *App) saveWebhook(c *Ctx, h *webhook.Hook, p map[string]any) (string, er
 	if outbound.CheckURL(h.URL) != nil {
 		inv.Add("url", "must be an http(s) URL")
 	}
+	if h.TestingURL != "" && outbound.CheckURL(h.TestingURL) != nil {
+		inv.Add("testing_url", "must be an http(s) URL")
+	}
 	if h.Kind != webhook.Internal && h.Kind != webhook.External {
 		inv.Add("kind", "must be internal or external")
 	}
@@ -131,15 +139,15 @@ func (a *App) saveWebhook(c *Ctx, h *webhook.Hook, p map[string]any) (string, er
 	}
 	now := store.Now()
 	if creating {
-		res, err := a.store.ExecContext(c.R.Context(), `INSERT INTO webhooks (name, url, secret, kind, body_map, events, headers, event_filters, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-			h.Name, h.URL, h.Secret, h.Kind, string(h.BodyMap), string(h.Events), string(h.Headers), string(h.EventFilters), h.Active, now.DB(), now.DB())
+		res, err := a.store.ExecContext(c.R.Context(), `INSERT INTO webhooks (name, url, testing_url, secret, kind, body_map, events, headers, event_filters, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			h.Name, h.URL, h.TestingURL, h.Secret, h.Kind, string(h.BodyMap), string(h.Events), string(h.Headers), string(h.EventFilters), h.Active, now.DB(), now.DB())
 		if err != nil {
 			return "", err
 		}
 		h.ID, _ = res.LastInsertId()
 		h.CreatedAt = now
-	} else if _, err := a.store.ExecContext(c.R.Context(), `UPDATE webhooks SET name=?, url=?, kind=?, body_map=?, events=?, headers=?, event_filters=?, active=?, updated_at=? WHERE id=?`,
-		h.Name, h.URL, h.Kind, string(h.BodyMap), string(h.Events), string(h.Headers), string(h.EventFilters), h.Active, now.DB(), h.ID); err != nil {
+	} else if _, err := a.store.ExecContext(c.R.Context(), `UPDATE webhooks SET name=?, url=?, testing_url=?, kind=?, body_map=?, events=?, headers=?, event_filters=?, active=?, updated_at=? WHERE id=?`,
+		h.Name, h.URL, h.TestingURL, h.Kind, string(h.BodyMap), string(h.Events), string(h.Headers), string(h.EventFilters), h.Active, now.DB(), h.ID); err != nil {
 		return "", err
 	}
 	h.UpdatedAt = now
@@ -290,6 +298,163 @@ func (a *App) rotateWebhookSecret(c *Ctx) error {
 	return c.JSON(200, O("webhook", append(webhookJSON(h), kv{"secret", plain})))
 }
 
+// webhookTry is a test's or a preview's request: which event, with what
+// data (blank: the latest one delivered that this webhook takes, else a
+// sample), and, for a test, where to ("testing", its testing URL, or
+// "live", its own).
+type webhookTry struct {
+	Event string         `json:"event"`
+	Data  map[string]any `json:"data"`
+	To    string         `json:"to"`
+}
+
+// tryData is the event and data a test or preview uses, and where the data
+// came from: "given", "delivery" (the latest of that event delivered that
+// h takes, for a real look) or "sample".
+func (a *App) tryData(c *Ctx, h *webhook.Hook, t webhookTry) (event string, data any, from string, err error) {
+	event = strings.TrimSpace(t.Event)
+	if event == "" {
+		event = "webhook.test"
+		for _, e := range h.Events.List() {
+			if s := str(e); s != "*" {
+				event = s
+				break
+			}
+		}
+	}
+	if t.Data != nil {
+		return event, t.Data, "given", nil
+	}
+	rows, err := a.store.QueryContext(c.R.Context(), `SELECT event_data FROM webhook_deliveries WHERE event = ? AND test = 0 AND event_data IS NOT NULL AND event_data != 'null' ORDER BY id DESC LIMIT 50`, event)
+	if err != nil {
+		return "", nil, "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return "", nil, "", err
+		}
+		var d any
+		if json.Unmarshal([]byte(raw), &d) == nil && h.Takes(event, d) {
+			return event, d, "delivery", nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", nil, "", err
+	}
+	if event == "webhook.test" {
+		return event, map[string]any{"message": "A test delivery from Libre Publish.", "webhook_id": h.ID}, "sample", nil
+	}
+	return event, sampleFor(h, event), "sample", nil
+}
+
+// sampleFor is sample data for event shaped to h: each path its body reads
+// that the sample lacks gets a value (a date for a date field), and each of
+// its conditions on the event is met, so the preview shows what h sends.
+func sampleFor(h *webhook.Hook, event string) map[string]any {
+	d := sampleEventData(event)
+	if h.Kind == webhook.External {
+		for _, f := range webhook.Fields(h.BodyMap) {
+			if f.Transform == "text" || webhook.Lookup(d, f.Value) != nil {
+				continue
+			}
+			v := "Sample " + f.Value[strings.LastIndex(f.Value, ".")+1:]
+			switch f.Transform {
+			case "date_us":
+				v = store.Now().Format(time.DateOnly)
+			case "number":
+				v = "1"
+			}
+			setPath(d, f.Value, v)
+		}
+	}
+	filters, _ := h.EventFilters.Map()[event].(map[string]any)
+	for path, want := range filters {
+		if list, _ := want.([]any); len(list) > 0 {
+			setPath(d, path, list[0])
+		}
+	}
+	return d
+}
+
+// setPath puts v at a dotted path in m, making the maps on the way.
+func setPath(m map[string]any, path string, v any) {
+	parts := strings.Split(path, ".")
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := m[p].(map[string]any)
+		if !ok {
+			next = map[string]any{}
+			m[p] = next
+		}
+		m = next
+	}
+	m[parts[len(parts)-1]] = v
+}
+
+// sampleEventData is made-up data in the shape event sends (the contract's).
+func sampleEventData(event string) map[string]any {
+	now := store.Now().UTC().Format(time.RFC3339)
+	kind, _, _ := strings.Cut(event, ".")
+	switch kind {
+	case "page":
+		return map[string]any{"id": 1, "slug": "about", "path": "about", "url": "https://example.com/about", "title": "About us", "status": "published", "locale": "en", "published_at": now, "updated_at": now}
+	case "entry":
+		return map[string]any{"id": 1, "collection_slug": "posts", "slug": "first-post", "url": "https://example.com/posts/first-post", "title": "First post", "status": "published", "locale": "en", "published_at": now, "updated_at": now}
+	case "global":
+		return map[string]any{"id": 1, "slug": "nav", "name": "Navigation", "updated_at": now}
+	case "schema":
+		return map[string]any{"schema_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+	case "submission":
+		return map[string]any{"form": "contact", "form_name": "Contact", "submission_id": "sample", "submitted_at": now, "hook": map[string]any{},
+			"values": map[string]any{"name": "Ada Lovelace", "first_name": "Ada", "last_name": "Lovelace", "email": "ada@example.com", "phone": "(555) 010-0100", "message": "A sample message."}}
+	}
+	return map[string]any{}
+}
+
+// tryJSON is a delivery as a preview or test shows it: where it goes, its
+// headers (h's own masked), and its body exactly.
+func tryJSON(h *webhook.Hook, out *webhook.Outgoing, event string, data any, from string) Obj {
+	headers := map[string]string{}
+	masked, _ := redact(h.Headers.Map()).(map[string]any) // a map, as given
+	for k := range out.Header {
+		headers[k] = out.Header.Get(k)
+	}
+	for k, v := range masked {
+		headers[http.CanonicalHeaderKey(k)] = str(v)
+	}
+	return O("event", event, "data", data, "data_from", from, "url", h.URL, "testing_url", h.TestingURL, "headers", headers,
+		"body", rawJSON(string(out.Body)), "body_text", string(out.Body))
+}
+
+// previewWebhook is what a delivery of an event would be, exactly, without
+// sending it.
+func (a *App) previewWebhook(c *Ctx) error {
+	if err := c.Need("webhooks:read"); err != nil {
+		return err
+	}
+	h, err := a.webhookByID(c)
+	if err != nil {
+		return err
+	}
+	var t webhookTry
+	if err := c.OptionalBody(&t); err != nil {
+		return err
+	}
+	event, data, from, err := a.tryData(c, h, t)
+	if err != nil {
+		return err
+	}
+	out, err := a.hooks.Build(h, event, data)
+	if err != nil {
+		return &apierr.Error{Status: 422, Code: "invalid", Message: err.Error()}
+	}
+	return c.JSON(200, tryJSON(h, out, event, data, from))
+}
+
+// testWebhook sends a test delivery: to the testing URL ("to": "testing"),
+// or the webhook's own. It's recorded as a test, and doesn't change how the
+// webhook is shown to be doing. With no body, the webhook.test event.
 func (a *App) testWebhook(c *Ctx) error {
 	if err := c.Need("webhooks:write"); err != nil {
 		return err
@@ -298,8 +463,26 @@ func (a *App) testWebhook(c *Ctx) error {
 	if err != nil {
 		return err
 	}
-	status, err := a.hooks.Send(c.R.Context(), h, "webhook.test", O("message", "A test delivery from Libre Publish.", "webhook_id", h.ID))
-	body := O("ok", err == nil && status >= 200 && status < 300, "response_status", status)
+	t := webhookTry{Event: "webhook.test"}
+	if err := c.OptionalBody(&t); err != nil {
+		return err
+	}
+	url := h.URL
+	if t.To == "testing" {
+		if h.TestingURL == "" {
+			return &apierr.Error{Status: 422, Code: "invalid", Message: "This webhook has no testing URL: add one, or send to its own.", Errors: map[string][]string{"testing_url": {"can't be blank to send a test there"}}}
+		}
+		url = h.TestingURL
+	}
+	event, data, from, err := a.tryData(c, h, t)
+	if err != nil {
+		return err
+	}
+	status, err := a.hooks.SendTest(c.R.Context(), h, event, data, url)
+	body := O("ok", err == nil && status >= 200 && status < 300, "response_status", status, "sent_to", url)
+	if out, berr := a.hooks.Build(h, event, data); berr == nil {
+		body = append(body, tryJSON(h, out, event, data, from)...)
+	}
 	if err != nil {
 		body = append(body, kv{"error", err.Error()})
 	}
@@ -314,7 +497,7 @@ func (a *App) webhookDeliveries(c *Ctx) error {
 	if err != nil {
 		return err
 	}
-	rows, err := a.store.QueryContext(c.R.Context(), `SELECT id, event, payload, response_status, success, duration_ms, error, created_at FROM webhook_deliveries WHERE webhook_id = ? ORDER BY id DESC LIMIT 100`, h.ID)
+	rows, err := a.store.QueryContext(c.R.Context(), `SELECT id, event, payload, test, response_status, success, duration_ms, error, created_at FROM webhook_deliveries WHERE webhook_id = ? ORDER BY id DESC LIMIT 100`, h.ID)
 	if err != nil {
 		return err
 	}
@@ -322,13 +505,13 @@ func (a *App) webhookDeliveries(c *Ctx) error {
 		var id int64
 		var event, payload string
 		var status, ms store.NullInt
-		var ok bool
+		var ok, test bool
 		var errText sql.NullString
 		var at store.Time
-		if err := r.Scan(&id, &event, &payload, &status, &ok, &ms, &errText, &at); err != nil {
+		if err := r.Scan(&id, &event, &payload, &test, &status, &ok, &ms, &errText, &at); err != nil {
 			return nil, err
 		}
-		return O("id", id, "event", event, "payload", rawJSON(payload), "response_status", status, "success", ok, "duration_ms", ms, "error", nullStr(errText), "created_at", at), nil
+		return O("id", id, "event", event, "payload", rawJSON(payload), "test", test, "response_status", status, "success", ok, "duration_ms", ms, "error", nullStr(errText), "created_at", at), nil
 	})
 	if err != nil {
 		return err
@@ -341,7 +524,7 @@ func (a *App) webhookDeliveries(c *Ctx) error {
 
 // webhookJSON is a webhook as the API shows it, its headers redacted.
 func webhookJSON(h *webhook.Hook) Obj {
-	return O("id", h.ID, "name", h.Name, "url", h.URL, "kind", h.Kind, "events", h.Events, "event_filters", h.EventFilters, "body_map", h.BodyMap, "headers", redact(h.Headers.Map()),
+	return O("id", h.ID, "name", h.Name, "url", h.URL, "testing_url", h.TestingURL, "kind", h.Kind, "events", h.Events, "event_filters", h.EventFilters, "body_map", h.BodyMap, "headers", redact(h.Headers.Map()),
 		"active", h.Active, "failure_count", h.FailureCount, "last_delivery_at", h.LastDeliveryAt, "last_status", h.LastStatus,
 		"created_at", h.CreatedAt, "updated_at", h.UpdatedAt)
 }

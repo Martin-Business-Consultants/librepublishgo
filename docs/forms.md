@@ -192,6 +192,24 @@ its body maps the answers (`values.email`) and the hook's values
 (`hook.quote_id`) to the CRM's keys, and **Only when** `form` is the form
 keeps it to that form's submissions (docs/webhooks.md).
 
+## Testing
+
+A form's **Testing** tab sends its emails without bothering the people who
+get the real ones. **Send test** sends each email that's on, as the form is
+in the editor (saved or not), with sample answers (a field's default or
+first choice, the testing address in every email field) and `[Test]` before
+the subject:
+
+- the submission email to `testing_to`, `testing_cc` and `testing_bcc`, in
+  place of Admin Confirmation's addresses;
+- the visitor's confirmation to `testing_client_to`, else the first
+  `testing_to`.
+
+Nothing is kept, the hook isn't called (no quote is made) and webhooks don't
+hear of it. `POST /api/x/forms/form/test?id=<slug>` with `{"form": {…}}`
+does the same; it answers 422 without a testing address or with neither
+email on.
+
 ## Submissions
 
 **Forms › Submissions** lists them newest first: unread, read, spam, by
