@@ -134,6 +134,30 @@ func (a *API) KVSet(ctx context.Context, key, value string) error {
 	return err
 }
 
+// KVAdd adds delta to the number stored under key (0 when there's none, or
+// it isn't a number) in one statement, so concurrent adds all count, and
+// answers the sum (storage).
+func (a *API) KVAdd(ctx context.Context, key string, delta int64) (int64, error) {
+	if err := a.need("storage", a.grants.Storage); err != nil {
+		return 0, err
+	}
+	if key == "" {
+		return 0, errors.New("a key can't be blank")
+	}
+	n, err := store.Count(ctx, a.h.db, `SELECT count(*) FROM plugin_kv WHERE plugin_key = ?`, a.key)
+	if err != nil {
+		return 0, err
+	}
+	if n > 100000 {
+		return 0, errors.New("this plugin's storage is full (100,000 keys)")
+	}
+	var sum int64
+	err = a.h.db.QueryRowContext(ctx, `INSERT INTO plugin_kv (plugin_key, key, value, updated_at) VALUES (?,?,CAST(? AS TEXT),?)
+		ON CONFLICT(plugin_key, key) DO UPDATE SET value = CAST(CAST(CAST(value AS TEXT) AS INTEGER) + ? AS TEXT), updated_at = excluded.updated_at
+		RETURNING CAST(CAST(value AS TEXT) AS INTEGER)`, a.key, key, delta, store.Now().DB(), delta).Scan(&sum)
+	return sum, err
+}
+
 // KVDelete removes key (storage).
 func (a *API) KVDelete(ctx context.Context, key string) error {
 	if err := a.need("storage", a.grants.Storage); err != nil {
