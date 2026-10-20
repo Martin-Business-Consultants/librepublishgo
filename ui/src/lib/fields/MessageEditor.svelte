@@ -10,7 +10,7 @@
   const text = (t) => `{{ ${t.name} }}`;
 </script>
 
-<div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_13rem]">
+<div class="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
   <TiptapEditor bind:this={editor} bind:value format="html" tools="email" mergeTags {id} {invalid} {placeholder} minHeight="min-h-56" />
   <aside class="flex flex-col gap-2 rounded-md border p-3 md:self-start" aria-label="Merge tags">
     <p class="text-sm font-medium">Insert a value</p>
