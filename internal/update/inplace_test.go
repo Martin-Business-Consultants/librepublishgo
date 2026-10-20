@@ -20,13 +20,11 @@ func stage(t *testing.T, dataDir, version string) string {
 }
 
 // A staged binary is only run while it matches the checksum recorded when
-// it was staged: one changed since, or with none recorded, is passed over
-// and recorded as failed.
+// it was staged: one changed since is passed over and recorded as failed.
 func TestChooseVerifiesTheStagedBinary(t *testing.T) {
 	t.Parallel()
 	for name, spoil := range map[string]func(bin string) error{
 		"changed": func(bin string) error { return os.WriteFile(bin, []byte("#!/bin/sh\necho evil\n"), 0o755) },
-		"no sum":  func(bin string) error { return os.Remove(sumFile(bin)) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -48,6 +46,32 @@ func TestChooseVerifiesTheStagedBinary(t *testing.T) {
 				t.Fatalf("not recorded as failed: %q", v)
 			}
 		})
+	}
+}
+
+// A release staged before checksums were recorded is recorded at its next
+// start and still chosen; a change after that is caught.
+func TestChooseRecordsAnOlderStagedBinary(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	bin := stage(t, dir, "2.0.4")
+	if err := os.Remove(sumFile(bin)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeMark(dir, "current", "2.0.4"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := Choose(dir, "2.0.3"); !ok || got != bin {
+		t.Fatalf("the release staged without a checksum wasn't chosen: %q %v", got, ok)
+	}
+	if _, err := os.Stat(sumFile(bin)); err != nil {
+		t.Fatalf("its checksum wasn't recorded: %v", err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho evil\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Choose(dir, "2.0.3"); ok {
+		t.Fatal("handed over to a binary changed after its checksum was recorded")
 	}
 }
 

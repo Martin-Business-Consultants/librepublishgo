@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,25 +106,40 @@ func writeAtomic(path string, b []byte, mode os.FileMode) error {
 }
 
 // verify is whether the binary at bin is the one Stage put there: its
-// SHA-256 is the one recorded beside it.
+// SHA-256 is the one recorded beside it. A release staged before Stage
+// recorded checksums has none: it's recorded now, so it keeps running and
+// any later change to it is caught. The record sits beside the binary, so
+// this catches a binary changed or damaged since, not one swapped by
+// something that can also write the record.
 func verify(bin string) error {
-	want, err := os.ReadFile(sumFile(bin))
-	if err != nil {
-		return fmt.Errorf("no checksum recorded for %s: %w", bin, err)
-	}
-	f, err := os.Open(bin) //nolint:gosec // the site's own data directory
+	got, err := fileSum(bin)
 	if err != nil {
 		return err
+	}
+	want, err := os.ReadFile(sumFile(bin))
+	if errors.Is(err, fs.ErrNotExist) {
+		return writeAtomic(sumFile(bin), []byte(got+"\n"), 0o600)
+	}
+	if err != nil {
+		return err
+	}
+	if got != strings.TrimSpace(string(want)) {
+		return fmt.Errorf("%s doesn't match the checksum recorded when it was staged", bin)
+	}
+	return nil
+}
+
+func fileSum(path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // the site's own data directory
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		return "", err
 	}
-	if got := hex.EncodeToString(h.Sum(nil)); got != strings.TrimSpace(string(want)) {
-		return fmt.Errorf("%s doesn't match the checksum recorded when it was staged", bin)
-	}
-	return nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // Check runs bin's `version` and wants version: a binary that can run here
