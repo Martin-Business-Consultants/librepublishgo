@@ -726,10 +726,10 @@ type writeResult struct {
 }
 
 // saveContent creates or updates a page or entry from a write's params, as
-// the actor. It enforces the publish gate: a write to something live, or one
-// that publishes or schedules, needs <prefix>:publish. Without it a write to
-// a live record is held as a revision for review, and one that would
-// publish a draft is refused.
+// the actor. It enforces the publish gate: a write to something live (or
+// scheduled to be), or one that publishes or schedules, needs
+// <prefix>:publish. Without it a write to a live record is held as a
+// revision for review, and one that would publish a draft is refused.
 func (a *App) saveContent(ctx context.Context, actor *Actor, rec *Content, params map[string]any) (*writeResult, error) {
 	creating := rec.ID == 0
 	prior := *rec
@@ -754,12 +754,20 @@ func (a *App) saveContent(ctx context.Context, actor *Actor, rec *Content, param
 		return nil, err
 	}
 
-	wasLive := !creating && prior.Status == "published"
-	if (wasLive || publishes(&prior, rec)) && !actor.Can(rec.Prefix()+":publish") {
-		if !wasLive {
+	// A scheduled draft is as good as live: the scheduler publishes whatever
+	// it holds when the time comes, so a change to it is reviewed too.
+	guarded := !creating && (prior.Status == "published" || prior.PublishAt.Valid)
+	if (guarded || publishes(&prior, rec)) && !actor.Can(rec.Prefix()+":publish") {
+		if !guarded {
 			return nil, apierr.Forbidden(rec.Prefix() + ":publish")
 		}
 		return a.holdWrite(ctx, actor, &prior, params)
+	}
+	// A page that moves takes the pages under it along.
+	if !creating && rec.Kind == "page" && rec.Path != prior.Path {
+		if err := a.mayCarry(ctx, actor, &prior, true, "move"); err != nil {
+			return nil, err
+		}
 	}
 
 	if !creating {
@@ -955,6 +963,47 @@ func resyncDescendants(ctx context.Context, tx *sql.Tx, p *Content) error {
 	return nil
 }
 
+// pagesUnder is the ids of the pages below id, at any depth, that aren't
+// in the trash.
+func pagesUnder(ctx context.Context, q store.Querier, id int64) ([]int64, error) {
+	ids := []int64{id}
+	for i := 0; i < len(ids) && i < 10000; i++ {
+		children, err := store.Int64s(ctx, q, `SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL`, ids[i])
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, children...)
+	}
+	return ids[1:], nil
+}
+
+// mayCarry refuses an actor without pages:publish a change to page p that
+// takes the published pages under it along (a move, the trash): those are
+// live, whatever p is. With scheduled, pages due to publish count too.
+func (a *App) mayCarry(ctx context.Context, actor *Actor, p *Content, scheduled bool, what string) error {
+	if p.Kind != "page" || actor.Can("pages:publish") {
+		return nil
+	}
+	ids, err := pagesUnder(ctx, a.store, p.ID)
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	cond := "status = 'published'"
+	if scheduled {
+		cond = "(status = 'published' OR publish_at IS NOT NULL)"
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	n, err := store.Count(ctx, a.store, `SELECT count(*) FROM pages WHERE id IN (`+store.Placeholders(len(ids))+`) AND `+cond, args...)
+	if err != nil || n == 0 {
+		return err
+	}
+	return &apierr.Error{Status: 403, Code: "forbidden", Capability: "pages:publish",
+		Message: fmt.Sprintf("%d live page(s) under this would %s with it, and your role doesn't grant pages:publish.", n, what)}
+}
+
 func writeTaggings(ctx context.Context, tx *sql.Tx, c *Content) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM taggings WHERE taggable_type = ? AND taggable_id = ?`, c.TaggableType(), c.ID); err != nil {
 		return err
@@ -1014,19 +1063,16 @@ func (a *App) joinTranslation(ctx context.Context, rec *Content, ofID int64) err
 // trashContent moves a record to the trash; a page takes its children.
 func (a *App) trashContent(ctx context.Context, actor *Actor, c *Content) error {
 	now := store.Now()
-	var trashed []*Content
+	trashed := []*Content{c}
+	var under []int64
 	err := a.store.Tx(ctx, func(tx *sql.Tx) error {
-		ids := []int64{c.ID}
 		if c.Kind == "page" {
-			for i := 0; i < len(ids) && i < 10000; i++ {
-				children, err := store.Int64s(ctx, tx, `SELECT id FROM pages WHERE parent_id = ? AND deleted_at IS NULL`, ids[i])
-				if err != nil {
-					return err
-				}
-				ids = append(ids, children...)
+			var err error
+			if under, err = pagesUnder(ctx, tx, c.ID); err != nil {
+				return err
 			}
 		}
-		for _, id := range ids {
+		for _, id := range append([]int64{c.ID}, under...) {
 			if _, err := tx.ExecContext(ctx, `UPDATE `+c.table()+` SET deleted_at = ?, updated_at = ? WHERE id = ?`, now.DB(), now.DB(), id); err != nil { //nolint:gosec // table() is "pages" or "collection_entries"
 				return err
 			}
@@ -1036,10 +1082,21 @@ func (a *App) trashContent(ctx context.Context, actor *Actor, c *Content) error 
 	if err != nil {
 		return err
 	}
-	trashed = append(trashed, c)
+	// The children went too: the site hears of the ones that were live.
+	if len(under) > 0 {
+		args := make([]any, len(under))
+		for i, id := range under {
+			args[i] = id
+		}
+		children, err := a.pages(ctx, `deleted_at IS NOT NULL AND id IN (`+store.Placeholders(len(under))+`)`, args...)
+		if err != nil {
+			a.log.Warn("trashed children", "page", c.Label(), "err", err)
+		}
+		trashed = append(trashed, children...)
+	}
 	for _, t := range trashed {
 		a.audit(ctx, actor, t.Kind+".trashed", t.TaggableType(), t.ID, t.Label(), nil)
-		if t.Live() {
+		if t.Status == "published" {
 			a.contentEvent(ctx, t, "deleted")
 		}
 	}
@@ -1082,6 +1139,23 @@ func (a *App) purgeContent(ctx context.Context, actor *Actor, c *Content) error 
 }
 
 func (a *App) restoreContent(ctx context.Context, actor *Actor, c *Content) error {
+	// Back from the trash, a published record (or a page's published
+	// children) is live again: that's publishing it.
+	if !actor.Can(c.Prefix() + ":publish") {
+		live := 0
+		if c.Status == "published" {
+			live = 1
+		} else if c.Kind == "page" && c.DeletedAt.Valid {
+			var err error
+			live, err = store.Count(ctx, a.store, `SELECT count(*) FROM pages WHERE deleted_at = ? AND path LIKE ? AND status = 'published'`, c.DeletedAt.DB(), c.Path+"/%")
+			if err != nil {
+				return err
+			}
+		}
+		if live > 0 {
+			return apierr.Forbidden(c.Prefix() + ":publish")
+		}
+	}
 	if c.Kind == "page" && c.ParentID.Valid {
 		parentGone, err := store.Count(ctx, a.store.DB, `SELECT count(*) FROM pages WHERE id = ? AND deleted_at IS NOT NULL`, c.ParentID.Int64)
 		if err != nil {

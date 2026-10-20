@@ -82,6 +82,10 @@ func (a *App) restoreTrash(c *Ctx) error {
 		if err != nil || len(g) == 0 {
 			return apierr.NotFound("Nothing in the trash by that id.")
 		}
+		// A global has no draft: back from the trash, it's live.
+		if err := c.Need("globals:publish"); err != nil {
+			return err
+		}
 		clash, err := store.Count(ctx, a.store, `SELECT count(*) FROM globals WHERE slug = ? AND deleted_at IS NULL`, g[0].Slug)
 		if err != nil {
 			return err

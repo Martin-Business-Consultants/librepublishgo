@@ -216,6 +216,18 @@ func (a *App) revokeServiceToken(c *Ctx) error {
 	if err != nil {
 		return err
 	}
+	// Revoking a token is taking down whatever runs on it: the same reach
+	// as holding it.
+	var roleID int64
+	err = a.store.QueryRowContext(c.R.Context(), `SELECT role_id FROM service_tokens WHERE id = ?`, id).Scan(&roleID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return apierr.NotFound("No service token " + c.Param("id") + ".")
+	} else if err != nil {
+		return err
+	}
+	if err := a.mayHoldToken(c, roleID); err != nil {
+		return err
+	}
 	if _, err := a.store.ExecContext(c.R.Context(), `UPDATE service_tokens SET revoked_at = ?, token = NULL WHERE id = ? AND revoked_at IS NULL`, store.Now().DB(), id); err != nil {
 		return err
 	}

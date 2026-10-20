@@ -322,10 +322,13 @@ func globalEqual(a, b *Global) bool {
 }
 
 // saveGlobal creates or updates a global. Globals have no draft state, so
-// changing one that exists needs globals:publish; without it the write is
-// held as a revision.
+// making one needs globals:publish, and changing one without it is held as
+// a revision.
 func (a *App) saveGlobal(ctx context.Context, actor *Actor, g *Global, p map[string]any) (*writeResult, error) {
 	creating := g.ID == 0
+	if creating && !actor.Can("globals:publish") {
+		return nil, apierr.Forbidden("globals:publish")
+	}
 	if !creating && !actor.Can("globals:publish") {
 		rev, ignored, err := a.fileRevision(ctx, actor, "Global", g.ID, g.Name, p, []string{"name", "description", "icon", "data"})
 		if err != nil {
