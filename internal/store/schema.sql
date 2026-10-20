@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   last_used_at datetime(6),
   last_used_ip varchar,
   created_at datetime(6) NOT NULL,
-  updated_at datetime(6) NOT NULL
+  updated_at datetime(6) NOT NULL,
+  label varchar
 );
 CREATE UNIQUE INDEX IF NOT EXISTS index_api_tokens_on_token_digest ON api_tokens (token_digest);
 
@@ -348,7 +349,8 @@ CREATE TABLE IF NOT EXISTS device_authorizations (
   denied_at datetime(6),
   expires_at datetime(6) NOT NULL,
   created_at datetime(6) NOT NULL,
-  updated_at datetime(6) NOT NULL
+  updated_at datetime(6) NOT NULL,
+  ip varchar
 );
 
 -- The Go core's own -------------------------------------------------------

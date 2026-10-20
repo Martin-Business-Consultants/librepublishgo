@@ -45,12 +45,28 @@ func TestPasswordResetAndEmailChange(t *testing.T) {
 	s.must(410, s.do("", "POST", "/api/password/reset", map[string]any{"token": token, "password": "another-password-2"}))
 	s.must(401, s.do("", "POST", "/api/session", map[string]any{"email": "alice@site.test", "password": "password1234"}))
 	s.must(201, s.do("", "POST", "/api/session", map[string]any{"email": "alice@site.test", "password": "a-new-password-1"}))
+	// Whoever had the account may have made a token: the reset ended it.
+	s.must(401, s.do(s.admin, "GET", "/api/users", nil))
+	var aliceID int64
+	if err := s.app.store.QueryRowContext(t.Context(), `SELECT id FROM users WHERE email = 'alice@site.test'`).Scan(&aliceID); err != nil {
+		t.Fatal(err)
+	}
+	s.admin, _, _ = s.app.mintUserToken(t.Context(), aliceID)
 
-	// A new address waits for its link; the old one is told.
+	// A new address takes the current password, even with a token...
 	me := s.must(200, s.do(s.admin, "GET", "/api/users", nil))
 	id := int64(dig(me.Body, "users", 0, "id").(float64))
 	path := "/api/users/" + strconv.FormatInt(id, 10)
-	r = s.must(200, s.do(s.admin, "PATCH", path, map[string]any{"user": map[string]any{"email": "alice@new.test"}}))
+	r = s.must(422, s.do(s.admin, "PATCH", path, map[string]any{"user": map[string]any{"email": "alice@new.test"}}))
+	if dig(r.Body, "errors", "current_password", 0) != "can't be blank" {
+		t.Fatalf("no current password: %s", r.Raw)
+	}
+	s.must(422, s.do(s.admin, "PATCH", path, map[string]any{"user": map[string]any{"email": "alice@new.test", "current_password": "password1234"}}))
+	if sent := mail.take(); len(sent) != 0 {
+		t.Fatalf("mailed without the password: %+v", sent)
+	}
+	// ...and waits for its link; the old one is told.
+	r = s.must(200, s.do(s.admin, "PATCH", path, map[string]any{"user": map[string]any{"email": "alice@new.test", "current_password": "a-new-password-1"}}))
 	if dig(r.Body, "user", "email") != "alice@site.test" || dig(r.Body, "user", "pending_email", "email") != "alice@new.test" {
 		t.Fatalf("pending: %s", r.Raw)
 	}
@@ -62,7 +78,7 @@ func TestPasswordResetAndEmailChange(t *testing.T) {
 	// Cancelled, the link is dead.
 	s.must(204, s.do(s.admin, "DELETE", path+"/pending_email", nil))
 	s.must(410, s.do("", "POST", "/api/email/confirm", map[string]any{"token": confirm}))
-	s.must(200, s.do(s.admin, "PATCH", path, map[string]any{"user": map[string]any{"email": "alice@new.test"}}))
+	s.must(200, s.do(s.admin, "PATCH", path, map[string]any{"user": map[string]any{"email": "alice@new.test", "current_password": "a-new-password-1"}}))
 	confirm = mailedToken(t, mail, "alice@new.test")
 	r = s.must(200, s.do("", "POST", "/api/email/confirm", map[string]any{"token": confirm}))
 	if r.Body["email"] != "alice@new.test" {

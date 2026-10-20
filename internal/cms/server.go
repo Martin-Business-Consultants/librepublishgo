@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/jsonv"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/restore"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/update"
@@ -63,7 +65,11 @@ type Config struct {
 	// must behind a proxy and mustn't when facing the internet directly
 	// (anyone could claim any address, and dodge the rate limits).
 	TrustProxy bool
-	Logger     *slog.Logger
+	// TrustedProxyHops is how many proxies append to X-Forwarded-For in
+	// front of the CMS (TRUSTED_PROXY_HOPS; 1 when 0): the client is that
+	// many entries from the right.
+	TrustedProxyHops int
+	Logger           *slog.Logger
 	// Mailer sends email; SMTP from Settings › Email when nil.
 	Mailer Mailer
 	// Admin serves the install's root (/, /assets/, and /cms redirected
@@ -113,9 +119,15 @@ type App struct {
 	limiter *ratelimit.Limiter // the delivery API's, per token
 	// Sign-in: ten tries a minute from one address, and ten at one account
 	// from anywhere (a botnet guessing one password). Forgotten passwords:
-	// five.
-	signIns *ratelimit.Limiter
-	forgots *ratelimit.Limiter
+	// five. Accounts are counted apart from addresses, so a flood of new
+	// addresses can't push an account's count out.
+	signIns        *ratelimit.Limiter
+	signInAccounts *ratelimit.Limiter
+	forgots        *ratelimit.Limiter
+	forgotAccounts *ratelimit.Limiter
+	// deviceCodes counts `librepublish login` codes asked for: ten a
+	// minute from one address.
+	deviceCodes *ratelimit.Limiter
 	// pluginCalls counts calls to plugins' public routes: 30 a minute from
 	// one address to one plugin, so a form can't be flooded.
 	pluginCalls *ratelimit.Limiter
@@ -157,12 +169,16 @@ func NewApp(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
+	if err := resealStretched(cfg, db, secrets); err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
 	limit := cfg.DeliveryRateLimit
 	if limit == 0 {
 		limit = defaultDeliveryRateLimit
 	}
 	a := &App{cfg: cfg, log: cfg.Logger, store: db, secrets: secrets, startedAt: time.Now(),
-		limiter: ratelimit.New(limit), signIns: ratelimit.New(10), forgots: ratelimit.New(5), pluginCalls: ratelimit.New(30)}
+		limiter: ratelimit.New(limit), signIns: ratelimit.New(10), signInAccounts: ratelimit.New(10), forgots: ratelimit.New(5), forgotAccounts: ratelimit.New(5),
+		deviceCodes: ratelimit.New(10), pluginCalls: ratelimit.New(30)}
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 	// The CMS's address, before anything (webhooks' tenant) reads it.
 	if g, err := a.setting(context.Background(), "general"); err == nil {
@@ -188,6 +204,32 @@ func NewApp(cfg Config) (*App, error) {
 	return a, nil
 }
 
+// stretchedMarker, in the data directory, says what SECRET_KEY's old key
+// sealed has been re-sealed under its stretched one.
+const stretchedMarker = "secret.stretched"
+
+// resealStretched re-seals, once, what a SECRET_KEY sealed before it was
+// stretched (secret.FromPassphrase), so that a backup, which carries the
+// stretched key, opens all of it.
+func resealStretched(cfg Config, db *store.DB, key *secret.Key) error {
+	legacy := key.Legacy()
+	marker := filepath.Join(cfg.DataDir, stretchedMarker)
+	if legacy == nil || cfg.DataDir == "" {
+		return nil
+	}
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	}
+	n, err := restore.Reseal(context.Background(), db, key.Current(), legacy)
+	if err != nil {
+		return fmt.Errorf("re-sealing under the stretched SECRET_KEY: %w", err)
+	}
+	if n > 0 {
+		cfg.Logger.Info("re-sealed secrets under the stretched SECRET_KEY", "values", n)
+	}
+	return os.WriteFile(marker, []byte("SECRET_KEY's values are sealed under its scrypt-stretched key.\n"), 0o600)
+}
+
 // Start loads the plugins (installing the ones the binary ships) and starts
 // the scheduler. One-off commands open an App without it.
 func (a *App) Start(ctx context.Context) error {
@@ -202,6 +244,7 @@ func (a *App) Start(ctx context.Context) error {
 	a.schemas.mu.Lock()
 	a.schemas.announced = digest
 	a.schemas.mu.Unlock()
+	a.announceSetup(ctx)
 	if !a.spawn(a.ctx, "scheduler", a.scheduler) {
 		return errors.New("the app is closed")
 	}
@@ -356,6 +399,8 @@ type Ctx struct {
 	etagFrom string
 	// What a delivery answer's records are, for ?include= (delivery_shape.go).
 	owner *deliveryOwner
+	// open is a route anyone may call: its body is small, and JSON.
+	open bool
 }
 
 // Crumb is a next step an agent's answer suggests: what it does, and the
@@ -506,11 +551,18 @@ func (c *Ctx) NoContent() error {
 	return nil
 }
 
-// maxBody is the most a JSON body may be.
-const maxBody = 32 << 20
+// maxBody is the most a JSON body may be; maxOpenBody on a route anyone
+// may call (signing in, setup, device login), which only ever takes a few
+// fields.
+const (
+	maxBody     = 32 << 20
+	maxOpenBody = 64 << 10
+)
 
 // Body decodes the request's JSON into v; a body that isn't JSON is a 400,
-// one over 32 MB a 413.
+// one over 32 MB a 413. On an open route the body is at most 64 KB and must
+// say it's JSON: a form on any other site can post text/plain here without
+// the browser asking first, but not application/json.
 func (c *Ctx) Body(v any) error { return c.body(v, false) }
 
 // OptionalBody is Body for a request that may come with none (v is left
@@ -518,9 +570,16 @@ func (c *Ctx) Body(v any) error { return c.body(v, false) }
 func (c *Ctx) OptionalBody(v any) error { return c.body(v, true) }
 
 func (c *Ctx) body(v any, optional bool) error {
-	data, err := io.ReadAll(http.MaxBytesReader(c.W, c.R.Body, maxBody))
+	limit := int64(maxBody)
+	if c.open {
+		limit = maxOpenBody
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(c.W, c.R.Body, limit))
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			if c.open {
+				return &apierr.Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: fmt.Sprintf("The request body is over %d KB.", limit>>10)}
+			}
 			return apierr.TooLarge(maxBody)
 		}
 		return apierr.BadRequest("Couldn't read the request body.")
@@ -531,10 +590,20 @@ func (c *Ctx) body(v any, optional bool) error {
 		}
 		return apierr.BadRequest("The request needs a JSON body.")
 	}
+	if c.open && !isJSONType(c.R.Header.Get("Content-Type")) {
+		return &apierr.Error{Status: http.StatusUnsupportedMediaType, Code: "unsupported_media_type", Message: "Send the body as JSON, with Content-Type: application/json."}
+	}
 	if err := json.Unmarshal(data, v); err != nil {
 		return apierr.BadRequest("The body isn't JSON: " + err.Error())
 	}
 	return nil
+}
+
+// isJSONType is whether a Content-Type is JSON's: application/json, or a
+// +json type.
+func isJSONType(ct string) bool {
+	mt, _, err := mime.ParseMediaType(ct)
+	return err == nil && (mt == "application/json" || strings.HasPrefix(mt, "application/") && strings.HasSuffix(mt, "+json"))
 }
 
 // Wrapped decodes {"<key>": {…}} into a map, 400 when the key is missing,
@@ -604,14 +673,22 @@ func (c *Ctx) Need(capability string) error {
 
 func (c *Ctx) can(capability string) bool { return c.Actor != nil && c.Actor.Can(capability) }
 
-// ip is the client's address. Behind a proxy it's the rightmost
-// X-Forwarded-For entry, the one our proxy appended: everything left of it
-// is whatever the client chose to send.
+// ip is the client's address. Behind a proxy it's the X-Forwarded-For
+// entry our proxies appended: the rightmost with one proxy, the Nth from
+// the right with N (TrustedProxyHops). Everything left of that is whatever
+// the client chose to send.
 func (c *Ctx) ip() string {
 	if c.App.cfg.TrustProxy {
-		if fwd := c.R.Header.Values("X-Forwarded-For"); len(fwd) > 0 {
-			last := fwd[len(fwd)-1]
-			if ip := strings.TrimSpace(last[strings.LastIndex(last, ",")+1:]); ip != "" {
+		var hops []string
+		for _, v := range c.R.Header.Values("X-Forwarded-For") {
+			for h := range strings.SplitSeq(v, ",") {
+				hops = append(hops, strings.TrimSpace(h))
+			}
+		}
+		// Fewer entries than proxies: the leftmost is the nearest to the
+		// client there is.
+		if len(hops) > 0 {
+			if ip := hops[max(len(hops)-max(c.App.cfg.TrustedProxyHops, 1), 0)]; ip != "" {
 				return ip
 			}
 		}
@@ -639,7 +716,7 @@ func (a *App) handle(mux *http.ServeMux, pattern string, h handlerFunc, opts ...
 		a.register(pattern, rt.tool)
 	}
 	mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		c := &Ctx{App: a, W: w, R: r}
+		c := &Ctx{App: a, W: w, R: r, open: !rt.auth}
 		defer func() {
 			if rec := recover(); rec != nil {
 				// A handler cutting the connection on purpose (a broken
@@ -711,7 +788,7 @@ func (a *App) Handler() http.Handler {
 		}
 		http.NotFound(w, r)
 	})
-	return a.logRequests(a.recoverPanics(a.cors(securityHeaders(mux))))
+	return a.logRequests(a.recoverPanics(a.cors(a.securityHeaders(mux))))
 }
 
 // ---- request logging -----------------------------------------------------
@@ -821,11 +898,16 @@ func (a *App) recoverPanics(next http.Handler) http.Handler {
 	})
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func (a *App) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// Reached over HTTPS, it's to be reached over nothing else: a
+		// browser told so never sends the session cookie in the clear.
+		if a.overTLS(r) {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		// The admin (/ and its assets) is never framed; files and the API
 		// may be embedded by the site.
 		if !strings.HasPrefix(r.URL.Path, "/files/") && !strings.HasPrefix(r.URL.Path, "/api") {
@@ -833,6 +915,12 @@ func securityHeaders(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// overTLS is whether r came over HTTPS: to us, or to the proxy in front
+// (TRUST_PROXY).
+func (a *App) overTLS(r *http.Request) bool {
+	return r.TLS != nil || a.cfg.TrustProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 // CORS for what a site's browser calls: the delivery API, public posts and

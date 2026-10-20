@@ -49,9 +49,15 @@ func sealed(ctx context.Context, db *store.DB, target *secret.Key, sources []*se
 	decide := func(where, v string) string {
 		out.Total++
 		if target != nil {
-			if _, ok := target.Open(v); ok {
+			if _, ok := target.Current().Open(v); ok {
 				out.Kept++
 				return v
+			}
+			// Sealed under what the target's SECRET_KEY was before it was
+			// stretched: moved to the stretched key, which a backup carries.
+			if plain, ok := target.Open(v); ok {
+				out.Resealed++
+				return target.Seal(plain)
 			}
 		}
 		for _, k := range sources {
@@ -141,6 +147,39 @@ func sealedIn(ctx context.Context, db *store.DB, c textColumn, decide func(strin
 		}
 	}
 	return changes, rows.Err()
+}
+
+// Reseal re-seals under target every value from opens and target doesn't,
+// and leaves the rest as they are (a Rails core's, another key's): how a
+// SECRET_KEY's values move to its stretched key. It's how many it changed.
+func Reseal(ctx context.Context, db *store.DB, target, from *secret.Key) (int, error) {
+	cols, err := textColumns(ctx, db)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	decide := func(v string) string {
+		if _, ok := target.Open(v); ok {
+			return v
+		}
+		if plain, ok := from.Open(v); ok {
+			n++
+			return target.Seal(plain)
+		}
+		return v
+	}
+	for _, c := range cols {
+		changes, err := sealedIn(ctx, db, c, decide)
+		if err != nil {
+			return n, err
+		}
+		for _, ch := range changes {
+			if _, err := db.ExecContext(ctx, `UPDATE `+quote(c.table)+` SET `+quote(c.name)+` = ? WHERE rowid = ?`, ch.value, ch.rowid); err != nil {
+				return n, err
+			}
+		}
+	}
+	return n, nil
 }
 
 // walkStrings is v with every string in it passed through fn.

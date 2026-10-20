@@ -13,10 +13,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/scrypt"
 )
 
 // Key is the install's key (DATA_DIR/secret.key, made on first run). It
@@ -25,6 +27,9 @@ import (
 // key; they still authenticate (by digest) and show as unreadable.
 type Key struct {
 	key []byte
+	// legacy is what a SECRET_KEY passphrase was before it was stretched
+	// (its SHA-256): values sealed then still open with it.
+	legacy []byte
 }
 
 // Load uses key (SECRET_KEY) when it's set, dir/secret.key
@@ -59,11 +64,36 @@ func FromHex(s string) (*Key, error) {
 	return &Key{key: sealKey}, nil
 }
 
-// FromPassphrase is the key SECRET_KEY=s stands for.
+// passphraseSalt is scrypt's salt for a SECRET_KEY: fixed, since the same
+// passphrase must make the same key on every start and every machine. What
+// it buys is the work factor: a guess at the passphrase costs scrypt's, not
+// one SHA-256.
+var passphraseSalt = []byte("librepublish SECRET_KEY v2")
+
+// FromPassphrase is the key SECRET_KEY=s stands for: s stretched with
+// scrypt. What was sealed under the key it stood for before (its SHA-256)
+// still opens; Seal only ever uses the stretched one.
 func FromPassphrase(s string) *Key {
 	sum := sha256.Sum256([]byte(s))
-	return &Key{key: sum[:]}
+	stretched, err := scrypt.Key([]byte(s), passphraseSalt, 1<<15, 8, 1, 32)
+	if err != nil {
+		panic(err) // only for parameters out of range, which these aren't
+	}
+	return &Key{key: stretched, legacy: sum[:]}
 }
+
+// Legacy is the key a SECRET_KEY stood for before it was stretched, to
+// re-seal what it sealed; nil for any other key.
+func (s *Key) Legacy() *Key {
+	if s.legacy == nil {
+		return nil
+	}
+	return &Key{key: s.legacy}
+}
+
+// Current is the key without its legacy one: what Seal uses, and the only
+// one that opens.
+func (s *Key) Current() *Key { return &Key{key: s.key} }
 
 // Candidates are the keys s could mean: a secret.key file's contents, or
 // a SECRET_KEY value (which may itself look like hex).
@@ -94,6 +124,8 @@ func (s *Key) Seal(plain string) string {
 }
 
 // Open returns the plaintext, ok false for a value this key didn't seal.
+// GCM authenticates, so a value tried under the wrong key fails rather
+// than opening as noise: the legacy key is tried after the current one.
 func (s *Key) Open(sealed string) (string, bool) {
 	if !strings.HasPrefix(sealed, SealedPrefix) {
 		return "", false
@@ -102,7 +134,17 @@ func (s *Key) Open(sealed string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	block, _ := aes.NewCipher(s.key)
+	if plain, ok := open(s.key, raw); ok {
+		return plain, true
+	}
+	if s.legacy != nil {
+		return open(s.legacy, raw)
+	}
+	return "", false
+}
+
+func open(key, raw []byte) (string, bool) {
+	block, _ := aes.NewCipher(key)
 	gcm, _ := cipher.NewGCM(block)
 	if len(raw) < gcm.NonceSize() {
 		return "", false
@@ -136,8 +178,23 @@ func Digest(s string) string {
 // lower it (before any run): at 12 a hash takes a quarter of a second.
 var PasswordCost = 12
 
-// HashPassword is pw's bcrypt hash.
+// MaxPassword is the longest password bcrypt takes, in bytes.
+const MaxPassword = 72
+
+// ErrPasswordTooLong is a password over MaxPassword bytes.
+var ErrPasswordTooLong = bcrypt.ErrPasswordTooLong
+
+// slots caps how many bcrypt hashes run at once: one per CPU. A flood of
+// sign-ins waits its turn instead of starving every other request.
+var slots = make(chan struct{}, runtime.NumCPU())
+
+// HashPassword is pw's bcrypt hash; ErrPasswordTooLong over 72 bytes.
 func HashPassword(pw string) (string, error) {
+	if len(pw) > MaxPassword {
+		return "", ErrPasswordTooLong
+	}
+	slots <- struct{}{}
+	defer func() { <-slots }()
 	b, err := bcrypt.GenerateFromPassword([]byte(pw), PasswordCost)
 	return string(b), err
 }
@@ -159,5 +216,7 @@ func DummyHash() string { return dummyHash() }
 // CheckPassword reads Rails' has_secure_password digests as they are: both
 // are bcrypt.
 func CheckPassword(digest, pw string) bool {
+	slots <- struct{}{}
+	defer func() { <-slots }()
 	return bcrypt.CompareHashAndPassword([]byte(digest), []byte(pw)) == nil
 }

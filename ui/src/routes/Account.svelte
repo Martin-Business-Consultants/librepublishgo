@@ -12,7 +12,8 @@
   import CopyButton from "../lib/components/CopyButton.svelte";
   import Notice from "../lib/components/Notice.svelte";
   import PasswordStrength from "../lib/components/PasswordStrength.svelte";
-  import { patch, post, del } from "../lib/api.js";
+  import { get, patch, post, del } from "../lib/api.js";
+  import { timeAgo } from "../lib/format.js";
   import { router } from "../lib/router.svelte.js";
   import { save } from "../lib/save.js";
   import { session } from "../lib/session.svelte.js";
@@ -20,11 +21,12 @@
   import { toast, toastError } from "../lib/toast.svelte.js";
   const me = session.me.user;
   let name = $state(me.name), current = $state(""), next = $state(""), errors = $state({}), token = $state(null);
-  let email = $state(me.email), pending = $state(me.pending_email), emailErrors = $state({});
+  let email = $state(me.email), pending = $state(me.pending_email), emailErrors = $state({}), emailPassword = $state("");
+  // Where reset links go, so moving it takes the password too.
   async function saveEmail() {
-    const r = await save(() => patch(`/users/${me.id}`, { user: { email } }));
+    const r = await save(() => patch(`/users/${me.id}`, { user: { email, current_password: emailPassword } }));
     emailErrors = r.errors || {};
-    if (r.ok) { pending = r.res.user.pending_email; email = r.res.user.email; session.me.user.pending_email = pending; }
+    if (r.ok) { pending = r.res.user.pending_email; email = r.res.user.email; session.me.user.pending_email = pending; emailPassword = ""; }
   }
   async function cancelEmail() {
     try { await del(`/users/${me.id}/pending_email`); pending = null; session.me.user.pending_email = null; toast("The change is cancelled."); } catch (e) { toastError(e); }
@@ -49,9 +51,19 @@
       command: `claude mcp add --transport http librepublish ${site}/mcp --header "Authorization: Bearer ${token || "<your API token>"}"` },
   ]);
   async function rotate() {
-    if (!(await confirm({ title: "Rotate your API token?", message: "The old one stops working at once, on every machine that has it.", confirmLabel: "Rotate" }))) return;
+    if (!(await confirm({ title: "Rotate your API token?", message: "The old one stops working at once, on every machine that has it. Devices signed in with librepublish login keep their own.", confirmLabel: "Rotate" }))) return;
     try { token = (await post("/api_tokens/rotate")).token.token; } catch (e) { toastError(e); }
   }
+  // Each `librepublish login` has a token of its own: one lost laptop is one revoke.
+  let devices = $state(null);
+  async function loadDevices() {
+    try { devices = (await get("/api_tokens")).api_tokens.filter((t) => t.device); } catch (e) { toastError(e); }
+  }
+  async function revoke(t) {
+    if (!(await confirm({ title: `Disconnect ${t.label}?`, message: "Its token stops working at once. Sign in there again with librepublish login.", confirmLabel: "Disconnect", destructive: true }))) return;
+    try { await del(`/api_tokens/${t.id}`); devices = devices.filter((d) => d.id !== t.id); toast("Disconnected."); } catch (e) { toastError(e); }
+  }
+  $effect(() => { if (tab === "agents" && devices === null) loadDevices(); });
 
   const TABS = [{ value: "profile", label: "Profile" }, { value: "security", label: "Security" }, { value: "agents", label: "API & agents" }];
   let tab = $state(TABS.some((t) => t.value === router.query.get("tab")) ? router.query.get("tab") : "profile");
@@ -83,6 +95,11 @@
           <Field label="Email" help="A new address takes effect once you confirm it from the link we send there. Until then this one stays." error={emailErrors.email}>
             {#snippet children(id, invalid)}<Input {id} {invalid} type="email" bind:value={email} autocomplete="email" />{/snippet}
           </Field>
+          {#if email.trim().toLowerCase() !== me.email.toLowerCase()}
+            <Field label="Current password" help="Your address is where password reset links go, so changing it takes your password." error={emailErrors.current_password}>
+              {#snippet children(id, invalid)}<Input {id} {invalid} type="password" bind:value={emailPassword} autocomplete="current-password" />{/snippet}
+            </Field>
+          {/if}
           {#if pending}
             <Notice tone="warning">
               <div class="flex flex-wrap items-center justify-between gap-2">
@@ -91,7 +108,7 @@
               </div>
             </Notice>
           {/if}
-          <div class="flex justify-end"><Button variant="primary" onclick={saveEmail} disabled={email.trim().toLowerCase() === me.email.toLowerCase()}>Change email</Button></div>
+          <div class="flex justify-end"><Button variant="primary" onclick={saveEmail} disabled={email.trim().toLowerCase() === me.email.toLowerCase() || !emailPassword}>Change email</Button></div>
         </div>
       </Panel>
     {:else if tab === "security"}
@@ -124,6 +141,25 @@
           <p class="text-muted-foreground">For <code class="rounded-sm bg-muted px-1 font-mono text-xs">librepublish</code> on a machine where <code class="rounded-sm bg-muted px-1 font-mono text-xs">librepublish login</code> can't open a browser, or an AI app connecting straight to <code class="rounded-sm bg-muted px-1 font-mono text-xs">/mcp</code>. It acts as you, with your role. Rotating it stops the old one at once, everywhere.</p>
           {#if token}<SecretBox value={token} note="Shown once: it's filled into the last command above until you leave this page." />{/if}
           <div><Button icon="refresh" onclick={rotate}>Rotate and show</Button></div>
+        </div>
+      </Panel>
+      <Panel title="Signed-in devices">
+        <div class="flex flex-col gap-3 p-6 text-sm">
+          {#if devices === null}
+            <p class="text-muted-foreground">Loading…</p>
+          {:else if devices.length === 0}
+            <p class="text-muted-foreground">None yet. Each computer you run <code class="rounded-sm bg-muted px-1 font-mono text-xs">librepublish login</code> on gets a token of its own, listed here.</p>
+          {:else}
+            {#each devices as t (t.id)}
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="truncate font-medium text-foreground">{t.label}{#if t.current} <span class="text-muted-foreground">(this one)</span>{/if}</p>
+                  <p class="text-muted-foreground">Signed in {timeAgo(t.created_at)}{#if t.last_used_at} · last used {timeAgo(t.last_used_at)}{#if t.last_used_ip} from {t.last_used_ip}{/if}{/if}</p>
+                </div>
+                <Button size="sm" variant="danger" onclick={() => revoke(t)}>Disconnect</Button>
+              </div>
+            {/each}
+          {/if}
         </div>
       </Panel>
     {/if}

@@ -56,7 +56,7 @@ func (c *call) testForm() *plugin.Response {
 			parts = append(parts, "the hook failed ("+res.call.Error+"), so its values aren't in")
 		}
 	}
-	sent := c.notify(t, sub)
+	sent := c.notify(t, sub, true)
 	if r, ok := sent["admin"]; ok {
 		parts = append(parts, fmt.Sprintf("the submission email %s (%s)", r, strings.Join(append(append(slices.Clone(t.AdminTo), t.AdminCc...), t.AdminBcc...), ", ")))
 	}

@@ -292,7 +292,7 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 		c.kvSetJSON("stat:"+f.Slug, st)
 	}
 	if sub.Status != "spam" {
-		sub.Mail = c.notify(f, sub)
+		sub.Mail = c.notify(f, sub, false)
 		if keep {
 			c.kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub)
 		}
@@ -410,11 +410,15 @@ func (c *call) verifyCaptcha(endpoint, secret, token, ip string, minScore float6
 
 // ---- email ----------------------------------------------------------------
 
-// notify sends the notification and the confirmation, and says how each went.
-func (c *call) notify(f Form, s Submission) map[string]string {
+// notify sends the notification and the confirmation, and says how each
+// went. The confirmation goes to an address anyone posting may type, so it
+// counts against the visitors' budget and that address's (MailVisitor),
+// never the notification's; a test's goes to the form's own testing
+// address, so it doesn't.
+func (c *call) notify(f Form, s Submission, test bool) map[string]string {
 	out := map[string]string{}
 	site := c.siteInfo()
-	tags := mergeTags(f, s, site)
+	tags := mergeTags(f, s, site, false)
 	if f.AdminEnabled { //nolint:nestif // who to send to, then sending
 		to := f.AdminTo
 		if len(to) == 0 && site.ContactEmail != "" {
@@ -423,7 +427,7 @@ func (c *call) notify(f Form, s Submission) map[string]string {
 		if len(to) == 0 {
 			out["admin"] = "not sent: no address to send to"
 		} else {
-			text, html := render(strOr(f.AdminMessage, defaultAdminMessage), f, s, site)
+			text, html := render(strOr(f.AdminMessage, defaultAdminMessage), f, s, site, false)
 			m := mail.Message{To: to, Cc: f.AdminCc, Bcc: f.AdminBcc, FromName: f.AdminFromName, FromEmail: strings.TrimSpace(f.AdminFromEmail),
 				Subject: fill(strOr(f.AdminSubject, "New {{ form_name }} submission"), tags), Text: text, HTML: html}
 			if f.AdminReplyToField != "" {
@@ -439,10 +443,14 @@ func (c *call) notify(f Form, s Submission) map[string]string {
 		if !emailFormat.MatchString(to) {
 			out["client"] = "not sent: no email address in " + f.ClientToField
 		} else {
-			text, html := render(strOr(f.ClientMessage, defaultClientMessage), f, s, site)
+			text, html := render(strOr(f.ClientMessage, defaultClientMessage), f, s, site, true)
 			m := mail.Message{To: []string{to}, FromName: f.ClientFromName, FromEmail: strings.TrimSpace(f.ClientFromEmail), ReplyTo: strings.TrimSpace(f.ClientReplyTo),
 				Subject: fill(f.ClientSubject, tags), Text: text, HTML: html}
-			out["client"] = c.result(c.sendMail(m), 1)
+			send := c.sendVisitorMail
+			if test {
+				send = c.sendMail
+			}
+			out["client"] = c.result(send(m), 1)
 		}
 	}
 	return out
@@ -502,7 +510,17 @@ func answer(fl Field, v any) string {
 	return s
 }
 
-func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
+// echoed is whether a field's answer is in {{ all_fields }}. In the
+// visitor's confirmation a paragraph field's isn't: it's free text anyone
+// can post, and the site would be mailing it, under its own name, to
+// whatever address was typed beside it. {{ <its name> }} still has it.
+func echoed(fl Field, visitor bool) bool {
+	return !visitor || fl.Type != "textarea"
+}
+
+// mergeTags are the values a message's {{ tags }} stand for; visitor for
+// the confirmation (see echoed).
+func mergeTags(f Form, s Submission, site plugin.Site, visitor bool) map[string]string {
 	tags := map[string]string{"form_name": f.Name, "site_name": site.Name, "submission_id": s.ID,
 		"date": longDate(s.SubmittedAt)}
 	// What the form's hook added, under the fields' own.
@@ -519,6 +537,9 @@ func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
 		tags[fl.Name] = v
 		if v == "" && fl.ShowIf != nil {
 			continue // a field its condition hid: not asked
+		}
+		if !echoed(fl, visitor) {
+			continue
 		}
 		if v == "" {
 			v = "—"
@@ -545,8 +566,8 @@ var (
 // render makes a message's plain text and HTML. A message written in the
 // rich-text editor is HTML; an older plain one is text, sent as text. In
 // HTML the answers are escaped, and {{ all_fields }} is a table.
-func render(tpl string, f Form, s Submission, st plugin.Site) (text, htmlOut string) {
-	plain := mergeTags(f, s, st)
+func render(tpl string, f Form, s Submission, st plugin.Site, visitor bool) (text, htmlOut string) {
+	plain := mergeTags(f, s, st, visitor)
 	if !htmlTag.MatchString(tpl) {
 		return fill(tpl, plain), ""
 	}
@@ -554,7 +575,7 @@ func render(tpl string, f Form, s Submission, st plugin.Site) (text, htmlOut str
 	for k, v := range plain {
 		esc[k] = strings.ReplaceAll(html.EscapeString(v), "\n", "<br>")
 	}
-	esc["all_fields"] = answersTable(f, s)
+	esc["all_fields"] = answersTable(f, s, visitor)
 	body := allFieldsPar.ReplaceAllString(tpl, esc["all_fields"])
 	for name, rows := range s.HookTables {
 		esc[name] = rowsTable(rows)
@@ -605,11 +626,11 @@ func rowsTable(rows []HookRow) string {
 	return b.String()
 }
 
-func answersTable(f Form, s Submission) string {
+func answersTable(f Form, s Submission, visitor bool) string {
 	var b strings.Builder
 	b.WriteString(`<table role="presentation" style="width:100%;border-collapse:collapse;margin:8px 0">`)
 	for _, fl := range f.Fields {
-		if fl.layout() || fl.Type == "hidden" {
+		if fl.layout() || fl.Type == "hidden" || !echoed(fl, visitor) {
 			continue
 		}
 		v := answer(fl, s.Values[fl.Name])

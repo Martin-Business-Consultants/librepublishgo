@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/mail"
 	"strings"
 
@@ -70,8 +71,8 @@ func (a *App) insertUser(ctx context.Context, db store.Querier, name, email, pas
 	if _, err := mail.ParseAddress(email); err != nil {
 		inv.Add("email", "is invalid")
 	}
-	if len(password) < 10 {
-		inv.Add("password", "is too short (minimum is 10 characters)")
+	if problem := passwordProblem(password); problem != "" {
+		inv.Add("password", problem)
 	}
 	var clash int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE lower(email) = ?`, email).Scan(&clash); err != nil {
@@ -149,8 +150,15 @@ func (a *App) updateUser(c *Ctx) error {
 			return err
 		}
 	}
-	// A new address waits for its confirmation link (account.go).
+	// A new address waits for its confirmation link (account.go). One's
+	// own takes the current password: the address is where a reset link
+	// goes, so whoever holds a session or a token mustn't move it alone.
 	if has(p, "email") && strings.TrimSpace(str(p["email"])) != "" {
+		if id == c.Actor.UserID && !strings.EqualFold(strings.TrimSpace(str(p["email"])), c.Actor.Email) {
+			if err := a.checkCurrentPassword(c, id, str(p["current_password"])); err != nil {
+				return err
+			}
+		}
 		if err := a.requestEmailChange(ctx, c.Actor, id, str(p["email"])); err != nil {
 			return err
 		}
@@ -228,20 +236,43 @@ func (a *App) destroyUser(c *Ctx) error {
 	return c.NoContent()
 }
 
+// passwordProblem is what's wrong with pw as a new password, or "": bcrypt
+// reads at most 72 bytes of one.
+func passwordProblem(pw string) string {
+	switch {
+	case len(pw) < 10:
+		return "is too short (minimum is 10 characters)"
+	case len(pw) > secret.MaxPassword:
+		return fmt.Sprintf("is too long (maximum is %d bytes)", secret.MaxPassword)
+	}
+	return ""
+}
+
+// checkCurrentPassword refuses unless current is user id's password.
+func (a *App) checkCurrentPassword(c *Ctx, id int64, current string) error {
+	if current == "" {
+		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"current_password": {"can't be blank"}}}
+	}
+	var digest string
+	if err := a.store.QueryRowContext(c.R.Context(), `SELECT password_digest FROM users WHERE id = ?`, id).Scan(&digest); err != nil {
+		return store.NotFound(err)
+	}
+	if !secret.CheckPassword(digest, current) {
+		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"current_password": {"is wrong"}}}
+	}
+	return nil
+}
+
 // changePassword sets user id's password to pw and signs out its other
 // sessions. Changing one's own needs the current password.
 func (a *App) changePassword(c *Ctx, id int64, pw, current string) error {
 	ctx := c.R.Context()
-	if len(pw) < 10 {
-		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"password": {"is too short (minimum is 10 characters)"}}}
+	if problem := passwordProblem(pw); problem != "" {
+		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"password": {problem}}}
 	}
 	if id == c.Actor.UserID {
-		var digest string
-		if err := a.store.QueryRowContext(ctx, `SELECT password_digest FROM users WHERE id = ?`, id).Scan(&digest); err != nil {
-			return store.NotFound(err)
-		}
-		if !secret.CheckPassword(digest, current) {
-			return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"current_password": {"is wrong"}}}
+		if err := a.checkCurrentPassword(c, id, current); err != nil {
+			return err
 		}
 	}
 	hash, err := secret.HashPassword(pw)

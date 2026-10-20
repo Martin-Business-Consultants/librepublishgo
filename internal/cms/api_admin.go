@@ -85,6 +85,8 @@ func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("POST /api/device/token", a.deviceToken, open)
 	h("POST /api/device/approve", a.deviceApprove)
 	h("GET /api/device/{code}", a.deviceShow)
+	h("GET /api/api_tokens", a.listMyTokens)
+	h("DELETE /api/api_tokens/{id}", a.revokeMyToken)
 
 	h("GET /api/session", a.showSession, open)
 	h("POST /api/session", a.createSession, open)
@@ -144,7 +146,55 @@ func (a *App) tokenRow(ctx context.Context, table string, id int64) Obj {
 	if a.store.QueryRowContext(ctx, `SELECT prefix, created_at, last_used_at, last_used_ip FROM `+table+` WHERE id = ?`, id).Scan(&prefix, &created, &used, &ip) != nil {
 		return nil
 	}
-	return O("id", id, "prefix", prefix, "created_at", created.ISO(), "last_used_at", used.ISO(), "last_used_ip", nullStr(ip))
+	o := O("id", id, "prefix", prefix, "created_at", created.ISO(), "last_used_at", used.ISO(), "last_used_ip", nullStr(ip))
+	if table == "api_tokens" {
+		var label sql.NullString
+		_ = a.store.QueryRowContext(ctx, `SELECT label FROM api_tokens WHERE id = ?`, id).Scan(&label)
+		o = append(o, kv{"label", nullStr(label)}, kv{"device", label.Valid})
+	}
+	return o
+}
+
+// listMyTokens is the caller's own tokens: the personal one, and one per
+// device `librepublish login` connected.
+func (a *App) listMyTokens(c *Ctx) error {
+	if c.Actor.UserID == 0 {
+		return apierr.Forbidden("a person's sign-in")
+	}
+	ids, err := store.Int64s(c.R.Context(), a.store.DB, `SELECT id FROM api_tokens WHERE user_id = ? ORDER BY label IS NOT NULL, id`, c.Actor.UserID)
+	if err != nil {
+		return err
+	}
+	out := []Obj{}
+	for _, id := range ids {
+		if o := a.tokenRow(c.R.Context(), "api_tokens", id); o != nil {
+			out = append(out, append(o, kv{"current", id == c.Actor.TokenID}))
+		}
+	}
+	return c.JSON(200, O("api_tokens", out))
+}
+
+// revokeMyToken ends one of the caller's own tokens at once: a lost
+// laptop's, say.
+func (a *App) revokeMyToken(c *Ctx) error {
+	if c.Actor.UserID == 0 {
+		return apierr.Forbidden("a person's sign-in")
+	}
+	id, err := c.IntParam("id")
+	if err != nil {
+		return err
+	}
+	res, err := a.store.ExecContext(c.R.Context(), `DELETE FROM api_tokens WHERE id = ? AND user_id = ?`, id, c.Actor.UserID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return apierr.NotFound("You have no token " + c.Param("id") + ".")
+	}
+	a.audit(c.R.Context(), c.Actor, "api_token.revoked", "ApiToken", id, c.Actor.Name, nil)
+	return c.NoContent()
 }
 
 func nullStr(s sql.NullString) any {
@@ -155,13 +205,13 @@ func nullStr(s sql.NullString) any {
 }
 
 // mintUserToken replaces the user's personal token (one per user: rotating
-// is revoking) and returns the plaintext.
+// is revoking; a device's own tokens stay) and returns the plaintext.
 func (a *App) mintUserToken(ctx context.Context, userID int64) (string, int64, error) {
 	plain := "lp_" + secret.Token(32)
 	now := store.Now().DB()
 	var id int64
 	err := a.store.Tx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE user_id = ?`, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE user_id = ? AND label IS NULL`, userID); err != nil {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO api_tokens (user_id, prefix, token, token_digest, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
@@ -175,18 +225,18 @@ func (a *App) mintUserToken(ctx context.Context, userID int64) (string, int64, e
 	return plain, id, err
 }
 
-// userToken is the user's token as it stands, minting one when there's none
-// or it can't be shown again.
-func (a *App) userToken(ctx context.Context, userID int64) (string, error) {
-	var sealed sql.NullString
-	err := a.store.QueryRowContext(ctx, `SELECT token FROM api_tokens WHERE user_id = ?`, userID).Scan(&sealed)
-	if err == nil && sealed.Valid {
-		if plain, ok := a.secrets.Open(sealed.String); ok {
-			return plain, nil
-		}
+// mintDeviceToken is a new token for the user, named for the device it's
+// for, beside their others; the plaintext is returned once and not kept.
+func (a *App) mintDeviceToken(ctx context.Context, userID int64, label string) (string, int64, error) {
+	plain := "lp_" + secret.Token(32)
+	now := store.Now().DB()
+	res, err := a.store.ExecContext(ctx, `INSERT INTO api_tokens (user_id, prefix, token_digest, label, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
+		userID, plain[:11], secret.Digest(plain), label, now, now)
+	if err != nil {
+		return "", 0, err
 	}
-	plain, _, err := a.mintUserToken(ctx, userID)
-	return plain, err
+	id, _ := res.LastInsertId()
+	return plain, id, nil
 }
 
 func (a *App) rotateMyToken(c *Ctx) error {

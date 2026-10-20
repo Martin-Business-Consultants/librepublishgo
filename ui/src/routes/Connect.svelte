@@ -8,6 +8,7 @@
   import { get, post } from "../lib/api.js";
   import { router, go } from "../lib/router.svelte.js";
   import { toast, toastError } from "../lib/toast.svelte.js";
+  import { timeAgo, dateTime } from "../lib/format.js";
   let code = $state((router.query.get("code") || "").toUpperCase()), info = $state(null), error = $state("");
   async function look() {
     info = null; error = "";
@@ -30,6 +31,14 @@
       {#if error}<Notice tone="danger">{error}</Notice>{/if}
       {#if info}
         <Notice tone="info">{info.purpose === "site" ? "A site build" : "librepublish"} on <strong class="font-semibold">{info.hostname || "a machine"}</strong> asks to act as you{info.purpose === "site" ? " and receive a read-only token for the site" : ""}.</Notice>
+        <!-- The name is the machine's own word; where and when are the CMS's. -->
+        <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-sm">
+          <dt class="text-muted-foreground">Asked from</dt>
+          <dd class="font-mono">{info.ip || "—"}</dd>
+          <dt class="text-muted-foreground">Asked</dt>
+          <dd title={dateTime(info.created_at)}>{timeAgo(info.created_at)}</dd>
+        </dl>
+        <p class="text-sm text-muted-foreground">If that isn't your computer, or you didn't just run <code class="rounded-sm bg-muted px-1 font-mono text-xs">librepublish login</code>, deny it.</p>
         <div class="flex justify-end gap-2"><Button variant="danger" onclick={() => decide(false)}>Deny</Button><Button variant="primary" onclick={() => decide(true)}>Approve</Button></div>
       {/if}
     </div>

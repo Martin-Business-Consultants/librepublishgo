@@ -69,9 +69,35 @@ func (a *API) Mail(ctx context.Context, m mail.Message) error {
 	if err := a.need("mail", a.grants.Mail); err != nil {
 		return err
 	}
-	if !a.h.mail.allow(a.key) {
-		return errors.New("this plugin has sent 200 emails in the last hour; try later")
+	if !a.h.mail.allow(a.key, mailPerHour) {
+		return fmt.Errorf("this plugin has sent %d emails in the last hour; try later", mailPerHour)
 	}
+	return a.send(ctx, m)
+}
+
+// MailVisitor is Mail for a message to an address a visitor gave (a
+// form's confirmation): it has its own 200 an hour, so posts that make
+// it send can't use up what the site's own notices (Mail) have, and at
+// most 3 an hour go to any one address, so the form can't be used to
+// flood someone else's inbox.
+func (a *API) MailVisitor(ctx context.Context, m mail.Message) error {
+	if err := a.need("mail", a.grants.Mail); err != nil {
+		return err
+	}
+	if len(m.To) != 1 || len(m.Cc) > 0 || len(m.Bcc) > 0 {
+		return errors.New("a visitor's email goes to the one address they gave")
+	}
+	to := "to " + strings.ToLower(strings.TrimSpace(m.To[0]))
+	if !a.h.mail.allow(a.key+" "+to, visitorMailPerAddress) {
+		return fmt.Errorf("%d emails have gone to that address in the last hour; no more until it's been one", visitorMailPerAddress)
+	}
+	if !a.h.mail.allow(a.key+" visitors", mailPerHour) {
+		return fmt.Errorf("this plugin has sent %d emails to visitors in the last hour; try later", mailPerHour)
+	}
+	return a.send(ctx, m)
+}
+
+func (a *API) send(ctx context.Context, m mail.Message) error {
 	if err := a.h.env.SendMail(ctx, m); err != nil {
 		return err
 	}
@@ -267,29 +293,47 @@ func truncate(s string, n int) string {
 	return s
 }
 
-// mailLimiter caps what each plugin sends: 200 messages an hour.
+// What a plugin may send in an hour: in all (Mail), to visitors in all
+// (MailVisitor), and to any one visitor's address.
+const (
+	mailPerHour           = 200
+	visitorMailPerAddress = 3
+)
+
+// mailLimiter caps what each plugin sends, per key, in the last hour.
 type mailLimiter struct {
-	mu    sync.Mutex
-	sends map[string][]time.Time
+	mu        sync.Mutex
+	sends     map[string][]time.Time
+	lastPrune time.Time
 }
 
-func (l *mailLimiter) allow(key string) bool {
+func (l *mailLimiter) allow(key string, limit int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.sends == nil {
 		l.sends = map[string][]time.Time{}
 	}
-	cut := time.Now().Add(-time.Hour)
+	now := time.Now()
+	cut := now.Add(-time.Hour)
+	// Addresses come and go: once a minute, those an hour quiet are forgotten.
+	if now.Sub(l.lastPrune) > time.Minute {
+		l.lastPrune = now
+		for k, ts := range l.sends {
+			if len(ts) == 0 || !ts[len(ts)-1].After(cut) {
+				delete(l.sends, k)
+			}
+		}
+	}
 	kept := l.sends[key][:0]
 	for _, t := range l.sends[key] {
 		if t.After(cut) {
 			kept = append(kept, t)
 		}
 	}
-	if len(kept) >= 200 {
+	if len(kept) >= limit {
 		l.sends[key] = kept
 		return false
 	}
-	l.sends[key] = append(kept, time.Now())
+	l.sends[key] = append(kept, now)
 	return true
 }

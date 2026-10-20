@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,12 @@ func TestHandler(t *testing.T) {
 	// The app's assets are at /assets/, as the built index.html asks for them.
 	if w := get("/"); !strings.Contains(w.Body.String(), `src="/assets/`) {
 		t.Fatalf("index asks for its assets elsewhere: %s", w.Body.String())
+	}
+	// Scripts are only the built files: the page has none inline, so the
+	// policy allows none, and an injected one doesn't run.
+	if w := get("/"); strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'self' 'unsafe-inline'") ||
+		regexp.MustCompile(`<script(\s[^>]*)?>\s*[^<\s]`).MatchString(w.Body.String()) {
+		t.Fatalf("inline scripts: %s\n%s", w.Header().Get("Content-Security-Policy"), w.Body.String())
 	}
 	assets, _ := fs.Glob(dist, "dist/assets/*.js")
 	if len(assets) == 0 {

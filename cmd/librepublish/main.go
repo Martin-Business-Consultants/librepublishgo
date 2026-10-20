@@ -5,6 +5,7 @@
 //	librepublish user create --email you@example.com --name You --password - [--role Administrator]
 //	librepublish token create --name PRODUCTION [--role "Production site"]
 //	librepublish seed-blocks
+//	librepublish setup-token [--data ./data]
 //	librepublish import backup.tar.gz [--data ./data] [--dry-run] [--force] [--secret-key-file old-secret.key]
 //	librepublish version
 package main
@@ -101,6 +102,8 @@ func run(ctx context.Context, stop func(), args []string) error {
 		return token(ctx, args)
 	case "seed-blocks":
 		return seedBlocks(ctx, args)
+	case "setup-token":
+		return setupToken(ctx, args)
 	case "import":
 		return importBackup(ctx, args)
 	case "update":
@@ -141,6 +144,7 @@ Running a site:
   user disable-2fa   turn two-factor off    --email
   token create issue a service token        --name PRODUCTION [--role "Production site"]
   seed-blocks  install the starter block types
+  setup-token  the code that makes the first administrator, while there's none
   import       replace the site with a backup  ARCHIVE-OR-DIR [--dry-run] [--force]
                (this core's, or the Rails core's)  [--secret-key-file F] [--json]
   update       install the newest release over this binary   [--check]
@@ -169,7 +173,8 @@ Every flag has an environment variable: DATA_DIR, ADDR (or PORT), APP_URL,
 SITE_KEY, CMS_DELIVERY_RATE_LIMIT (requests a minute per token, 0 for no
 limit), SECRET_KEY, IMPORT_MAX_BYTES (the largest backup the admin may
 upload, 10 GiB by default), and TRUST_PROXY=1 behind a proxy (Caddy, nginx, a load
-balancer) so client addresses come from X-Forwarded-For. LOG_LEVEL (debug,
+balancer) so client addresses come from X-Forwarded-For (TRUSTED_PROXY_HOPS=2
+when two proxies append to it, a CDN and a load balancer say). LOG_LEVEL (debug,
 info, warn, error) and LOG_FORMAT (text, json) shape the log.
 `)
 }
@@ -235,8 +240,15 @@ func parseArgs(name string, args []string, extra func(*flag.FlagSet)) (cms.Confi
 		return cms.Config{}, nil, err
 	}
 	trust := os.Getenv("TRUST_PROXY") == "1" || os.Getenv("TRUST_PROXY") == "true"
+	hops := 1
+	if v := os.Getenv("TRUSTED_PROXY_HOPS"); v != "" {
+		if hops, err = strconv.Atoi(v); err != nil || hops < 1 {
+			return cms.Config{}, nil, usagef("TRUSTED_PROXY_HOPS is how many proxies are in front (1 or more), not %q", v)
+		}
+	}
 	return cms.Config{DataDir: *data, Addr: *listen, BaseURL: base, SiteKey: os.Getenv("SITE_KEY"), SecretKey: os.Getenv("SECRET_KEY"),
-		Version: version, UpdateCheck: os.Getenv("UPDATE_CHECK") != "0" && os.Getenv("UPDATE_CHECK") != "false", DeliveryRateLimit: limit, TrustProxy: trust, Logger: logger, ImportMaxBytes: importMax}, rest, nil
+		Version: version, UpdateCheck: os.Getenv("UPDATE_CHECK") != "0" && os.Getenv("UPDATE_CHECK") != "false", DeliveryRateLimit: limit, TrustProxy: trust, TrustedProxyHops: hops,
+		Logger: logger, ImportMaxBytes: importMax}, rest, nil
 }
 
 // rateLimit reads CMS_DELIVERY_RATE_LIMIT: unset is the default, 0 is none
@@ -345,6 +357,11 @@ func serve(ctx context.Context, stop func(), args []string) (err error) {
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	cfg.Logger.Info("libre publish is up", "version", version, "admin", app.App().BaseURL()+"/", "data", cfg.DataDir, "addr", ln.Addr().String())
+	// A new install: whoever opens it first mustn't be its administrator,
+	// so the setup screen asks for this code (logged by Start too).
+	if token, err := app.App().SetupToken(ctx); err == nil && token != "" {
+		fmt.Fprintf(os.Stderr, "\n  No administrator yet. Make one at:\n\n    %s\n\n  (`librepublish setup-token` shows it again.)\n\n", app.App().SetupURL(token))
+	}
 	// Serving: a release being tried has come up (update.Confirm).
 	update.Confirm(cfg.DataDir, version)
 
@@ -486,6 +503,27 @@ func token(ctx context.Context, args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "Issued %q on %s. It is shown once; keep it in the site's environment, never in a repo.\n", name, role)
 		fmt.Println(plain)
+		return nil
+	})
+}
+
+// setupToken prints the one-time code the admin's setup screen asks for on
+// an install with no users, and the address that fills it in.
+func setupToken(ctx context.Context, args []string) error {
+	cfg, err := parse("setup-token", args, nil)
+	if err != nil {
+		return err
+	}
+	return withApp(cfg, func(app *cms.App) error {
+		token, err := app.SetupToken(ctx)
+		if err != nil {
+			return err
+		}
+		if token == "" {
+			return errors.New("this install has users already, so there's no setup to do: `librepublish user create` adds someone")
+		}
+		fmt.Fprintf(os.Stderr, "Open %s to make the first administrator, or give this setup token there:\n", app.SetupURL(token))
+		fmt.Println(token)
 		return nil
 	})
 }

@@ -212,6 +212,11 @@ func TestFormsPlugin(t *testing.T) {
 		header(client.raw, "Reply-To") != "help@acme.test" || !strings.Contains(client.raw, "Thanks, Ada") || !strings.Contains(client.raw, "Topic: Sales") {
 		t.Fatalf("client email:\n%s", client.raw)
 	}
+	// The confirmation goes wherever the visitor said: it doesn't carry
+	// their free text there under the site's name. The notification does.
+	if strings.Contains(decodeQP(client.raw), "hello") || !strings.Contains(adminBody, "hello") {
+		t.Fatalf("free text in the confirmation:\n%s", decodeQP(client.raw))
+	}
 
 	// Spam is kept, flagged, and not emailed; the bot is told it worked.
 	s.must(200, s.do("", "POST", "/api/x/forms/submit?form=contact-us", map[string]any{"name": "Bot", "email": "bot@spam.test", "_hp": "http://spam", "_ts": ts}))
@@ -768,4 +773,41 @@ func TestFormsSendTest(t *testing.T) {
 	// Neither email on: nothing to test.
 	form["admin_enabled"], form["client_enabled"] = false, false
 	s.must(422, s.do(s.admin, "POST", "/api/x/forms/form/test?id=quote", map[string]any{"form": form}))
+}
+
+// A form mails whatever address is typed into it: posts can't make it an
+// inbox flood, nor spend the budget the site's own notifications have.
+func TestFormConfirmationsAreCapped(t *testing.T) {
+	t.Parallel()
+	mail := &captureMailer{}
+	s := newSiteWith(t, Config{Mailer: mail})
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/email", map[string]any{"setting": map[string]any{"data": map[string]any{
+		"smtp_host": "smtp.acme.test", "from_name": "Acme", "from_email": "hello@acme.test"}}}))
+	s.must(200, s.do(s.admin, "POST", "/api/x/forms/form", map[string]any{"form": map[string]any{
+		"name": "Contact", "slug": "contact", "status": "active",
+		"fields": []any{
+			map[string]any{"type": "email", "name": "email", "label": "Email", "required": true},
+			map[string]any{"type": "textarea", "name": "message", "label": "Message"},
+		},
+		"admin_enabled": true, "admin_to": []any{"owner@acme.test"},
+		"client_enabled": true, "client_to_field": "email", "client_subject": "Thanks",
+	}}))
+	for i := range 5 {
+		s.must(200, s.do("", "POST", "/api/x/forms/submit?form=contact", map[string]any{"email": []string{"victim@example.test", "Victim@Example.test"}[i%2], "message": "buy pills"}))
+	}
+	var toVictim, toOwner int
+	for _, m := range mail.take() {
+		switch strings.ToLower(m.to[0]) {
+		case "victim@example.test":
+			toVictim++
+			if strings.Contains(decodeQP(m.raw), "buy pills") {
+				t.Fatalf("the confirmation carried the visitor's text:\n%s", decodeQP(m.raw))
+			}
+		case "owner@acme.test":
+			toOwner++
+		}
+	}
+	if toVictim != 3 || toOwner != 5 {
+		t.Fatalf("5 posts: %d confirmations to one address (want 3), %d notifications (want 5)", toVictim, toOwner)
+	}
 }

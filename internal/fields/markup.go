@@ -2,8 +2,15 @@ package fields
 
 import (
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/text"
+	nethtml "golang.org/x/net/html"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/jsonv"
@@ -15,10 +22,12 @@ import (
 // (or, worse, trusts), and in a Markdown field it's formatting the editor
 // can't show or edit, which a site's renderer escapes anyway.
 
-// The messages a field holding HTML is refused with.
+// The messages a field holding HTML is refused with, and a Markdown link
+// to somewhere a link mustn't go.
 const (
 	PlainTextHTMLMessage = "Formatting isn't allowed here: use a Markdown (rich text) field"
 	MarkdownHTMLMessage  = "Use the editor's formatting, not HTML tags"
+	MarkdownLinkMessage  = "A link or image " + unsafeURLMessage
 )
 
 // htmlTagPattern finds what could be a tag: < or </, a name, then either >
@@ -54,6 +63,11 @@ func setOf(words string) map[string]bool {
 }
 
 // HasHTML is whether plain text s holds an HTML tag, comment or the like.
+// What's a tag is read twice: by the pattern above, and as a browser's
+// tokenizer reads it, which also takes / between a name and its
+// attributes (<img/src=x onerror=…>). Either finding a known element is
+// HTML, and so is any tag with an event handler, known or not
+// (<x onclick=…> is an element to a browser, with a handler that runs).
 func HasHTML(s string) bool {
 	if !strings.Contains(s, "<") {
 		return false
@@ -66,7 +80,32 @@ func HasHTML(s string) bool {
 			return true
 		}
 	}
-	return false
+	return tokenizedTag(s)
+}
+
+// tokenizedTag is whether HTML's tokenizer reads a known element, or a tag
+// with an on… attribute, in s.
+func tokenizedTag(s string) bool {
+	z := nethtml.NewTokenizer(strings.NewReader(s))
+	for {
+		switch z.Next() {
+		case nethtml.ErrorToken:
+			return false
+		case nethtml.StartTagToken, nethtml.EndTagToken, nethtml.SelfClosingTagToken:
+			name, more := z.TagName()
+			if htmlElements[string(name)] {
+				return true
+			}
+			// A handler has a value to run; "<String, Online>" has none.
+			for more {
+				var key, val []byte
+				key, val, more = z.TagAttr()
+				if len(key) > 2 && strings.HasPrefix(string(key), "on") && len(val) > 0 {
+					return true
+				}
+			}
+		}
+	}
 }
 
 // MarkdownHasHTML is whether Markdown s holds raw HTML outside code: what's
@@ -173,8 +212,47 @@ func isASCIIPunct(c byte) bool {
 	return strings.IndexByte("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", c) >= 0
 }
 
+// mdParser reads Markdown as the site's renderers do (CommonMark, with
+// the editor's extensions).
+var mdParser = goldmark.New(goldmark.WithExtensions(extension.Strikethrough, extension.TaskList)).Parser()
+
+// MarkdownUnsafeLink is whether Markdown s has a link, image or autolink
+// whose address SafeURL refuses (javascript: and kin), entities and all:
+// a renderer decodes &#58; in an address before a browser reads it.
+func MarkdownUnsafeLink(s string) bool {
+	if !strings.Contains(s, ":") && !strings.Contains(s, "&") {
+		return false
+	}
+	src := []byte(s)
+	doc := mdParser.Parse(text.NewReader(src))
+	unsafe := false
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		var dest []byte
+		switch x := n.(type) {
+		case *ast.Link:
+			dest = x.Destination
+		case *ast.Image:
+			dest = x.Destination
+		case *ast.AutoLink:
+			dest = x.URL(src)
+		default:
+			return ast.WalkContinue, nil
+		}
+		if !SafeURL(html.UnescapeString(string(dest))) {
+			unsafe = true
+			return ast.WalkStop, nil
+		}
+		return ast.WalkContinue, nil
+	})
+	return unsafe
+}
+
 // markupProblem is what's wrong with string v as a value of a text field of
-// type typ: HTML where it isn't allowed, or "".
+// type typ: HTML where it isn't allowed, a Markdown link to javascript:,
+// or "".
 func markupProblem(typ, v string) string {
 	switch typ {
 	case "string", "text":
@@ -184,6 +262,9 @@ func markupProblem(typ, v string) string {
 	case "markdown":
 		if MarkdownHasHTML(v) {
 			return MarkdownHTMLMessage
+		}
+		if MarkdownUnsafeLink(v) {
+			return MarkdownLinkMessage
 		}
 	}
 	return ""

@@ -3,17 +3,41 @@ package cms
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
 const devicePollInterval = 5
 
+// maxDeviceText is the most of a device's hostname and label kept: they're
+// the asking machine's word, shown on the approval screen.
+const maxDeviceText = 200
+
+// clip is s cut to n bytes, at a character's end.
+func clip(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
 func (a *App) deviceCode(c *Ctx) error {
+	if ok, wait := a.deviceCodes.Allow("device:" + ratelimit.IPKey(c.ip())); !ok {
+		c.W.Header().Set("Retry-After", strconv.Itoa(wait))
+		return &apierr.Error{Status: 429, Code: "rate_limited", Message: "Too many sign-in codes asked for. Try again in a minute."}
+	}
 	var body map[string]any
 	if err := c.OptionalBody(&body); err != nil {
 		return err
@@ -33,8 +57,8 @@ func (a *App) deviceCode(c *Ctx) error {
 		code = append(code, letters[int(b)%len(letters)])
 	}
 	expires := store.TimeOf(time.Now().Add(15 * time.Minute))
-	_, err := a.store.ExecContext(c.R.Context(), `INSERT INTO device_authorizations (device_code, user_code, hostname, label, purpose, expires_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)`,
-		secret.Digest(device), string(code), str(body["hostname"]), str(body["label"]), purpose, expires.DB(), store.Now().DB(), store.Now().DB())
+	_, err := a.store.ExecContext(c.R.Context(), `INSERT INTO device_authorizations (device_code, user_code, hostname, label, purpose, ip, expires_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		secret.Digest(device), string(code), clip(str(body["hostname"]), maxDeviceText), clip(str(body["label"]), maxDeviceText), purpose, c.ip(), expires.DB(), store.Now().DB(), store.Now().DB())
 	if err != nil {
 		return err
 	}
@@ -43,15 +67,18 @@ func (a *App) deviceCode(c *Ctx) error {
 		"expires_in", int(time.Until(expires.Time).Seconds()), "account", a.tenant()))
 }
 
+// deviceShow is what the approval screen shows of a code: the machine's
+// word for itself, and the address and time it was asked from, which are
+// the CMS's own.
 func (a *App) deviceShow(c *Ctx) error {
-	var host, label, purpose sql.NullString
-	var expires store.Time
-	err := a.store.QueryRowContext(c.R.Context(), `SELECT hostname, label, purpose, expires_at FROM device_authorizations WHERE user_code = ? AND approved_at IS NULL AND denied_at IS NULL`,
-		strings.ToUpper(c.Param("code"))).Scan(&host, &label, &purpose, &expires)
+	var host, label, purpose, ip sql.NullString
+	var expires, created store.Time
+	err := a.store.QueryRowContext(c.R.Context(), `SELECT hostname, label, purpose, ip, created_at, expires_at FROM device_authorizations WHERE user_code = ? AND approved_at IS NULL AND denied_at IS NULL`,
+		strings.ToUpper(c.Param("code"))).Scan(&host, &label, &purpose, &ip, &created, &expires)
 	if err != nil || time.Now().After(expires.Time) {
 		return apierr.NotFound("That code has expired or was already used. Run `librepublish login` again.")
 	}
-	return c.JSON(200, O("hostname", nullStr(host), "label", nullStr(label), "purpose", nullStr(purpose)))
+	return c.JSON(200, O("hostname", nullStr(host), "label", nullStr(label), "purpose", nullStr(purpose), "ip", nullStr(ip), "created_at", created.ISO()))
 }
 
 func (a *App) deviceApprove(c *Ctx) error {
@@ -149,11 +176,19 @@ func (a *App) deviceToken(c *Ctx) error {
 		}
 		out = append(out, kv{"token", plain}, kv{"purpose", "site"}, kv{"token_name", name})
 	} else {
-		plain, err := a.userToken(c.R.Context(), user.UserID)
+		// A token of its own, named for the device, so that losing the
+		// laptop costs that token (Your account › API & agents), not every
+		// machine's.
+		name := label.String
+		if name == "" {
+			name = "librepublish on " + strOr(host.String, "a device")
+		}
+		plain, id, err := a.mintDeviceToken(c.R.Context(), user.UserID, clip(name, maxDeviceText))
 		if err != nil {
 			return err
 		}
-		out = append(out, kv{"token", plain}, kv{"purpose", "user"})
+		a.audit(c.R.Context(), user, "api_token.created", "ApiToken", id, name, nil)
+		out = append(out, kv{"token", plain}, kv{"purpose", "user"}, kv{"token_name", name})
 	}
 	return c.JSON(200, append(out, kv{"user", O("name", user.Name, "email", user.Email)}, kv{"account", a.tenant()}, kv{"api_url", a.BaseURL()}))
 }

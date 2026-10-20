@@ -1,7 +1,9 @@
 package secret
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -222,5 +224,47 @@ func TestKeyForms(t *testing.T) {
 	}
 	if Candidates("  ") != nil {
 		t.Fatal("blank has candidates")
+	}
+}
+
+func TestPassphraseIsStretched(t *testing.T) {
+	t.Parallel()
+	k := FromPassphrase("passphrase")
+	sum := sha256.Sum256([]byte("passphrase"))
+	old := &Key{key: sum[:]}
+	if k.Hex() == old.Hex() {
+		t.Fatal("the passphrase's key is its bare SHA-256")
+	}
+	// What was sealed before still opens; what's sealed now doesn't need
+	// the old key, and the old key alone can't open it.
+	sealedBefore := old.Seal("before")
+	if p, ok := k.Open(sealedBefore); !ok || p != "before" {
+		t.Fatal("a value sealed under the old key doesn't open")
+	}
+	if _, ok := k.Current().Open(sealedBefore); ok {
+		t.Fatal("the current key alone opened the old key's value")
+	}
+	now := k.Seal("now")
+	if _, ok := old.Open(now); ok {
+		t.Fatal("a new seal opened with the old key")
+	}
+	if p, ok := k.Current().Open(now); !ok || p != "now" {
+		t.Fatal("a new seal needs the old key")
+	}
+	if k.Legacy().Hex() != old.Hex() || FromPassphrase("passphrase").Hex() != k.Hex() {
+		t.Fatal("Legacy isn't the old key, or the stretch isn't the same twice")
+	}
+	if hexKey, _ := FromHex(k.Hex()); hexKey.Legacy() != nil {
+		t.Fatal("a key file's key has a legacy key")
+	}
+}
+
+func TestPasswordLimits(t *testing.T) {
+	t.Parallel()
+	if _, err := HashPassword(strings.Repeat("a", MaxPassword+1)); !errors.Is(err, ErrPasswordTooLong) {
+		t.Fatalf("a 73-byte password: %v", err)
+	}
+	if _, err := HashPassword(strings.Repeat("a", MaxPassword)); err != nil {
+		t.Fatalf("a 72-byte password: %v", err)
 	}
 }
