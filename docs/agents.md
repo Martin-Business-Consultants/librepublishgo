@@ -58,6 +58,21 @@ The traps a tool's description warns about:
 A tool can never do more than the API lets the signed-in role do: it runs
 through the same routes, as you.
 
+## Redirects live here, and only here
+
+A site built on LibrePublish defines no redirects of its own. Every one — a
+renamed page, a retired URL, a slug that changed, a page withheld for legal
+reasons — is a redirect in the CMS (Tools › Redirects, or `create_redirect`).
+The Astro integration writes them into the site's `_redirects` at build time,
+and stops a build that brings its own: a `redirects` map in `astro.config`, or
+rules in `public/_redirects`. So when work on a site would add a redirect,
+add it here; when a site's repo has one, move it here and delete it there.
+A redirect kept in two places goes stale in one of them, and only the CMS is
+where an editor can see it.
+
+Change a slug and add its redirect in the same step, so no inbound link is
+left pointing at nothing.
+
 ## MCP
 
 Every site is an MCP server at `/mcp` (Streamable HTTP, a token in the

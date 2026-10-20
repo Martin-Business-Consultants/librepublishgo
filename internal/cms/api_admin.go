@@ -16,11 +16,11 @@ import (
 
 func (a *App) adminRoutes(h func(string, handlerFunc, ...func(*route))) {
 	h("GET /api/redirects", a.edgeRedirects)
-	h("GET /api/redirects/all", a.allRedirects, tool("list_redirects", "List redirects."))
+	h("GET /api/redirects/all", a.allRedirects, tool("list_redirects", "List redirects. These are every redirect the site has: a site built on this CMS defines none of its own."))
 	h("GET /api/redirects/resolve", a.resolveRedirect)
 	h("GET /api/redirects/export", a.exportRedirects)
 	h("POST /api/redirects/import", a.importRedirects)
-	h("POST /api/redirects", a.createRedirect, tool("create_redirect", "Add a redirect.", body("redirect", "from_path, to_path, status_code (301 or 302).", true)))
+	h("POST /api/redirects", a.createRedirect, tool("create_redirect", "Add a redirect. The CMS is the only place a site's redirects live (the Astro integration writes them to _redirects and stops a build that defines its own), so a renamed, retired or withheld URL is added here, never in the site's code.", body("redirect", "source_path (a path, starting with /), destination_url, status_code (301, 302, 307, 308 or 410; default 301).", true)))
 	h("PATCH /api/redirects/{id}", a.updateRedirect)
 	h("PUT /api/redirects/{id}", a.updateRedirect)
 	h("DELETE /api/redirects/{id}", a.destroyRedirect, tool("delete_redirect", "Remove a redirect."))
