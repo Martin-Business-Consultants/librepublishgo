@@ -349,6 +349,12 @@ func TestCollectionsEntriesAndDelivery(t *testing.T) {
 	if dig(r.Body, "errors", "frontmatter.summary", 0) != fields.PlainTextHTMLMessage || dig(r.Body, "errors", "body_markdown", 0) != fields.MarkdownHTMLMessage {
 		t.Fatalf("HTML in text fields: %s", r.Raw)
 	}
+	// So is a body link with a scheme no link should have.
+	r = s.must(422, s.do(s.admin, "POST", "/api/collections/posts/entries", map[string]any{"entry": map[string]any{"slug": "hello", "title": "Hello",
+		"frontmatter": map[string]any{"summary": "Hi"}, "body_markdown": "[Our story](javascript:alert(1))"}}))
+	if dig(r.Body, "errors", "body_markdown", 0) != fields.MarkdownLinkMessage {
+		t.Fatalf("an unsafe link in the body: %s", r.Raw)
+	}
 	s.must(201, s.do(s.admin, "POST", "/api/collections/posts/entries", map[string]any{"entry": map[string]any{
 		"slug": "hello", "title": "Hello", "status": "published", "frontmatter": map[string]any{"summary": "Hi"}, "body_markdown": "# Hello",
 	}}))

@@ -615,8 +615,12 @@ func (a *App) validateBody(ctx context.Context, c, prior *Content, inv apierr.In
 		fields.ValidateData(defs, fm, types, inv, "frontmatter")
 		fields.ValidateMarkupData(defs, fm, types, before, inv, "frontmatter")
 	}
-	if (prior == nil || c.BodyMarkdown != prior.BodyMarkdown) && fields.MarkdownHasHTML(c.BodyMarkdown) {
-		inv.Add("body_markdown", fields.MarkdownHTMLMessage)
+	if prior == nil || c.BodyMarkdown != prior.BodyMarkdown {
+		if fields.MarkdownHasHTML(c.BodyMarkdown) {
+			inv.Add("body_markdown", fields.MarkdownHTMLMessage)
+		} else if fields.MarkdownUnsafeLink(c.BodyMarkdown) {
+			inv.Add("body_markdown", fields.MarkdownLinkMessage)
+		}
 	}
 	if !json.Valid(c.Seo) || !strings.HasPrefix(strings.TrimSpace(string(c.Seo)), "{") {
 		inv.Add("seo", "must be an object")
