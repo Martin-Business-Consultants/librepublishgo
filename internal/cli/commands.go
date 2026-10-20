@@ -477,11 +477,15 @@ func parseArgs(env Env, t Tool, args []string) (map[string]any, error) {
 		}
 		p := t.Params[idx]
 		if !hasVal {
+			next, hasNext := "", i+1 < len(args)
+			if hasNext {
+				next = args[i+1]
+			}
 			switch {
-			case p.Type == "boolean" && (i+1 >= len(args) || strings.HasPrefix(args[i+1], "--")):
+			case p.Type == "boolean" && (!hasNext || strings.HasPrefix(next, "--")):
 				val = "true"
-			case i+1 < len(args):
-				val, i = args[i+1], i+1
+			case hasNext:
+				val, i = next, i+1
 			default:
 				return nil, fmt.Errorf("--%s needs a value", a[2:])
 			}

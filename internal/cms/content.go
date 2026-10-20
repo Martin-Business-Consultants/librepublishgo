@@ -790,12 +790,23 @@ func (a *App) saveContent(ctx context.Context, actor *Actor, rec *Content, param
 		}
 	}
 
-	err := a.store.Tx(ctx, func(tx *sql.Tx) error {
+	if err := a.writeContent(ctx, actor, rec, &prior, creating, now); err != nil {
+		return nil, err
+	}
+
+	a.announce(ctx, actor, rec, &prior, creating)
+	return &writeResult{Record: rec, Created: creating}, nil
+}
+
+// writeContent stores a write saveContent let through: the record, its
+// tags, a version when the body changed, and what it references, together.
+func (a *App) writeContent(ctx context.Context, actor *Actor, rec, prior *Content, creating bool, now store.Time) error {
+	return a.store.Tx(ctx, func(tx *sql.Tx) error {
 		write := updateContent
 		if creating {
 			write = insertContent
 		}
-		if err := write(ctx, tx, rec, &prior, now); err != nil {
+		if err := write(ctx, tx, rec, prior, now); err != nil {
 			return err
 		}
 		if rec.tagIDs != nil {
@@ -803,19 +814,13 @@ func (a *App) saveContent(ctx context.Context, actor *Actor, rec *Content, param
 				return err
 			}
 		}
-		if creating || bodyChanged(&prior, rec) {
+		if creating || bodyChanged(prior, rec) {
 			if err := writeVersion(ctx, tx, rec, actor); err != nil {
 				return err
 			}
 		}
 		return a.writeReferences(ctx, tx, rec)
 	})
-	if err != nil {
-		return nil, err
-	}
-
-	a.announce(ctx, actor, rec, &prior, creating)
-	return &writeResult{Record: rec, Created: creating}, nil
 }
 
 // publishes is whether going from prior to rec publishes the record, now

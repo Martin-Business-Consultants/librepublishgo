@@ -69,7 +69,7 @@ func TestUploadTypesAndInlineFiles(t *testing.T) {
 		}
 	}
 
-	fetch := func(r resp) *http.Response {
+	fetch := func(r resp) http.Header {
 		t.Helper()
 		res, err := get(t, str(dig(s.must(201, r).Body, "asset", "url")))
 		if err != nil {
@@ -77,16 +77,16 @@ func TestUploadTypesAndInlineFiles(t *testing.T) {
 		}
 		io.Copy(io.Discard, res.Body)
 		res.Body.Close()
-		return res
+		return res.Header
 	}
 	svg := fetch(s.uploadAs("logo.svg", "image/svg+xml", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)))
-	if !strings.HasPrefix(svg.Header.Get("Content-Disposition"), "attachment") || !strings.Contains(svg.Header.Get("Content-Security-Policy"), "sandbox") ||
-		svg.Header.Get("X-Content-Type-Options") != "nosniff" {
-		t.Fatalf("svg: %v", svg.Header)
+	if !strings.HasPrefix(svg.Get("Content-Disposition"), "attachment") || !strings.Contains(svg.Get("Content-Security-Policy"), "sandbox") ||
+		svg.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("svg: %v", svg)
 	}
 	png := fetch(s.uploadAs("mill.png", "IMAGE/PNG", pngOf(t, 10, 10)))
-	if png.Header.Get("Content-Disposition") != "" || png.Header.Get("Content-Type") != "image/png" {
-		t.Fatalf("png: %v", png.Header)
+	if png.Get("Content-Disposition") != "" || png.Get("Content-Type") != "image/png" {
+		t.Fatalf("png: %v", png)
 	}
 }
 

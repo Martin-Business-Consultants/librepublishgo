@@ -89,17 +89,18 @@ func TestCheckURL(t *testing.T) {
 	}
 }
 
-func get(t *testing.T, u string) (*http.Response, error) {
+func get(t *testing.T, u string) (int, error) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, u, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	res, err := Client.Do(req)
-	if err == nil {
-		res.Body.Close()
+	if err != nil {
+		return 0, err
 	}
-	return res, err
+	res.Body.Close()
+	return res.StatusCode, nil
 }
 
 // What the dialer sees decides, whatever the URL said: loopback by name is
@@ -139,7 +140,7 @@ func TestRedirects(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if res, err := get(t, srv.URL+"/same"); err != nil || res.StatusCode != http.StatusNoContent {
+	if status, err := get(t, srv.URL+"/same"); err != nil || status != http.StatusNoContent {
 		t.Fatalf("same host: %v", err)
 	}
 	if _, err := get(t, srv.URL+"/metadata"); err == nil {
@@ -186,9 +187,9 @@ func TestNoProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", proxy.URL)
 	t.Setenv("http_proxy", proxy.URL)
 	t.Setenv("NO_PROXY", "")
-	res, err := get(t, srv.URL)
-	if err != nil || res.StatusCode != http.StatusOK || proxied.Load() != 0 {
-		t.Fatalf("status %v, err %v, proxied %d", res, err, proxied.Load())
+	status, err := get(t, srv.URL)
+	if err != nil || status != http.StatusOK || proxied.Load() != 0 {
+		t.Fatalf("status %d, err %v, proxied %d", status, err, proxied.Load())
 	}
 }
 
