@@ -84,8 +84,10 @@ func login(ctx context.Context, env Env, args []string) error {
 	noBrowser := false
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
-		case a == "--name" && i+1 < len(args):
+		case (a == "--name" || a == "--profile") && i+1 < len(args):
 			name, i = args[i+1], i+1
+		case strings.HasPrefix(a, "--name="), strings.HasPrefix(a, "--profile="):
+			name = a[strings.Index(a, "=")+1:]
 		case a == "--token" && i+1 < len(args):
 			token, i = args[i+1], i+1
 		case a == "--no-browser":
@@ -97,7 +99,7 @@ func login(ctx context.Context, env Env, args []string) error {
 		}
 	}
 	if site == "" {
-		return errors.New("usage: librepublish login https://cms.example.com [--name NAME] [--token TOKEN] [--no-browser]")
+		return errors.New("usage: librepublish login https://cms.example.com [--profile NAME] [--token TOKEN] [--no-browser]")
 	}
 	if !strings.Contains(site, "://") {
 		site = "https://" + site
@@ -110,6 +112,15 @@ func login(ctx context.Context, env Env, args []string) error {
 	if name == "" {
 		name = u.Hostname()
 	}
+	// Signing in again to the same site refreshes its token; a profile that
+	// names another site is someone's credential, and is not overwritten.
+	ps, err := loadProfiles()
+	if err != nil {
+		return err
+	}
+	if p, ok := ps.Profiles[name]; ok && p.URL != site {
+		return fmt.Errorf("profile %q is already %s: sign in with another --profile, or remove it first (librepublish logout --profile %s)", name, p.URL, name)
+	}
 	c := newClient(Profile{URL: site})
 	if token == "" {
 		if token, err = deviceLogin(ctx, env, c, noBrowser); err != nil {
@@ -121,10 +132,6 @@ func login(ctx context.Context, env Env, args []string) error {
 		return err
 	} else if status != 200 {
 		return apiError(status, body)
-	}
-	ps, err := loadProfiles()
-	if err != nil {
-		return err
 	}
 	ps.Profiles[name] = Profile{URL: site, Token: token}
 	if ps.Default == "" || len(ps.Profiles) == 1 {
