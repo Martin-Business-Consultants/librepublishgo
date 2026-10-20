@@ -2,6 +2,7 @@ package cms
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
@@ -33,6 +36,9 @@ func (r *Redirect) JSON() Obj {
 }
 
 func (a *App) redirects(ctx context.Context, where string, args ...any) ([]*Redirect, error) {
+	// Not while hits are being written: they'd be neither pending nor read.
+	a.hits.flushing.RLock()
+	defer a.hits.flushing.RUnlock()
 	rows, err := a.store.QueryContext(ctx, `SELECT id, source_path, destination_url, status_code, active, wildcard, hit_count, last_hit_at, COALESCE(notes, ''), created_at, updated_at
 		FROM redirects WHERE `+where, args...)
 	if err != nil {
@@ -47,6 +53,7 @@ func (a *App) redirects(ctx context.Context, where string, args ...any) ([]*Redi
 		}
 		out = append(out, r)
 	}
+	a.hits.apply(out)
 	return out, rows.Err()
 }
 
@@ -111,11 +118,106 @@ func (a *App) resolveRedirect(c *Ctx) error {
 	if r == nil {
 		return apierr.NotFound("No redirect for " + c.Query("path") + ".")
 	}
-	// The hit count is a nicety: a failure to bump it doesn't fail the lookup.
-	if _, err := a.store.ExecContext(c.R.Context(), `UPDATE redirects SET hit_count = hit_count + 1, last_hit_at = ? WHERE id = ?`, store.Now().DB(), r.ID); err != nil {
-		a.log.Warn("redirect hit count", "redirect", r.ID, "err", err)
-	}
+	// Counted in memory and written every few seconds (flushHits): a public
+	// hit shouldn't wait on a write.
+	a.hits.add(r.ID)
 	return c.JSON(200, O("source", r.Source, "destination", dest, "status", r.Status))
+}
+
+// redirectHits are hits not yet written: per redirect, how many and the
+// latest.
+type redirectHits struct {
+	mu      sync.Mutex
+	pending map[int64]redirectHit
+	// flushing is held while a batch is written, and read while rules are.
+	flushing sync.RWMutex
+}
+
+type redirectHit struct {
+	n  int
+	at store.Time
+}
+
+func (h *redirectHits) add(id int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pending == nil {
+		h.pending = map[int64]redirectHit{}
+	}
+	p := h.pending[id]
+	h.pending[id] = redirectHit{n: p.n + 1, at: store.Now()}
+}
+
+// apply adds the hits not yet written to rules read from the database, so
+// a listing's counts are current.
+func (h *redirectHits) apply(list []*Redirect) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, r := range list {
+		if p, ok := h.pending[r.ID]; ok {
+			r.Hits += p.n
+			if !r.LastHitAt.Valid || p.at.After(r.LastHitAt.Time) {
+				r.LastHitAt = p.at
+			}
+		}
+	}
+}
+
+// hitFlushEvery is how often counted hits are written.
+const hitFlushEvery = 10 * time.Second
+
+// countHits writes counted hits every hitFlushEvery; Close writes the rest.
+func (a *App) countHits(ctx context.Context) {
+	tick := time.NewTicker(hitFlushEvery)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			a.flushHits(ctx)
+		}
+	}
+}
+
+// flushHits writes the hits counted since the last time, in one
+// transaction. What fails to write is put back for the next.
+func (a *App) flushHits(ctx context.Context) {
+	a.hits.flushing.Lock()
+	defer a.hits.flushing.Unlock()
+	a.hits.mu.Lock()
+	batch := a.hits.pending
+	a.hits.pending = nil
+	a.hits.mu.Unlock()
+	if len(batch) == 0 {
+		return
+	}
+	err := a.store.Tx(ctx, func(tx *sql.Tx) error {
+		for id, p := range batch {
+			if _, err := tx.ExecContext(ctx, `UPDATE redirects SET hit_count = hit_count + ?, last_hit_at = ? WHERE id = ?`, p.n, p.at.DB(), id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		return
+	}
+	// The hit count is a nicety: a failure is logged and tried again.
+	a.log.Warn("redirect hit count", "err", err)
+	a.hits.mu.Lock()
+	defer a.hits.mu.Unlock()
+	if a.hits.pending == nil {
+		a.hits.pending = map[int64]redirectHit{}
+	}
+	for id, p := range batch {
+		q := a.hits.pending[id]
+		q.n += p.n
+		if !q.at.Valid || p.at.After(q.at.Time) {
+			q.at = p.at
+		}
+		a.hits.pending[id] = q
+	}
 }
 
 func (a *App) saveRedirect(c *Ctx, r *Redirect, p map[string]any) error {

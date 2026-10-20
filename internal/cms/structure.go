@@ -543,30 +543,27 @@ func (a *App) saveBlockType(ctx context.Context, actor *Actor, b *BlockType, p m
 // general settings saying the site is served over the API.
 func (a *App) seed() error {
 	ctx := context.Background()
-	// Roles only on an empty install: a Rails database brings its own.
-	roles, err := store.Count(ctx, a.store.DB, `SELECT count(*) FROM roles`)
-	if err != nil {
-		return err
-	}
-	for _, r := range defaultRoles {
-		if roles > 0 {
-			break
-		}
-		perms, _ := json.Marshal(r.Caps)
-		if _, err := a.store.ExecContext(ctx, `INSERT INTO roles (name, description, permissions, system, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
-			r.Name, r.Description, string(perms), r.System, store.Now().DB(), store.Now().DB()); err != nil {
+	// Counted and written in one write transaction, so two processes
+	// starting on a new database don't both seed it.
+	return a.store.Tx(ctx, func(tx *sql.Tx) error {
+		// Roles only on an empty install: a Rails database brings its own.
+		roles, err := store.Count(ctx, tx, `SELECT count(*) FROM roles`)
+		if err != nil {
 			return err
 		}
-	}
-	n, err := store.Count(ctx, a.store.DB, `SELECT count(*) FROM settings WHERE key = 'general'`)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		_, err := a.store.ExecContext(ctx, `INSERT INTO settings (key, data, created_at, updated_at) VALUES ('general', ?, ?, ?)`,
+		for _, r := range defaultRoles {
+			if roles > 0 {
+				break
+			}
+			perms, _ := json.Marshal(r.Caps)
+			if _, err := tx.ExecContext(ctx, `INSERT INTO roles (name, description, permissions, system, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
+				r.Name, r.Description, string(perms), r.System, store.Now().DB(), store.Now().DB()); err != nil {
+				return err
+			}
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO settings (key, data, created_at, updated_at) VALUES ('general', ?, ?, ?) ON CONFLICT(key) DO NOTHING`,
 			`{"title":"My site","default_locale":"en","serving":"api_only"}`, store.Now().DB(), store.Now().DB())
 		a.generalCache.forget()
 		return err
-	}
-	return nil
+	})
 }

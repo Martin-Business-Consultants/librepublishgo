@@ -59,6 +59,15 @@ func migrate(ctx context.Context, db *sql.DB, list []migration) error {
 	}
 	for i := version; i < len(list); i++ {
 		err := inTx(ctx, db, func(tx *sql.Tx) error {
+			// Read again under the write lock: another process starting
+			// on the same database may have run it since.
+			var now int
+			if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&now); err != nil {
+				return err
+			}
+			if now > i {
+				return nil
+			}
 			if err := list[i](ctx, tx); err != nil {
 				return err
 			}

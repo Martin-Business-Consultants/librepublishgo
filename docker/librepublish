@@ -9,7 +9,13 @@ set -e
 dir="${DATA_DIR:-/data}"
 if [ "$(id -u)" = 0 ]; then
   mkdir -p "$dir"
-  find "$dir" \! -user app -exec chown app:app {} +
+  # Only a directory not app's yet is walked (a fresh volume): every start
+  # after that skips it. The walk never follows a symlink (-P), and a link
+  # is chowned itself, not what it points to (-h), so a link planted in the
+  # volume can't hand app a file outside it.
+  if [ -n "$(find -P "$dir" -maxdepth 0 \! -user app)" ]; then
+    find -P "$dir" \! -user app -exec chown -h app:app {} +
+  fi
   exec su-exec app:app /usr/local/libexec/librepublish "$@"
 fi
 exec /usr/local/libexec/librepublish "$@"

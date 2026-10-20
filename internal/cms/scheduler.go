@@ -2,8 +2,11 @@ package cms
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"time"
 
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
@@ -19,6 +22,17 @@ func (a *App) scheduler(ctx context.Context) {
 		case <-tick.C:
 		}
 	}
+}
+
+// scheduleFailed logs a scheduled save that didn't happen. A conflict is
+// another process's scheduler (two run while a deploy overlaps them)
+// saving it first: nothing's wrong, so it's only a debug line.
+func (a *App) scheduleFailed(what string, c *Content, err error) {
+	if e, ok := errors.AsType[*apierr.Error](err); ok && e.Status == http.StatusConflict {
+		a.log.Debug(what, "record", c.Label(), "err", err)
+		return
+	}
+	a.log.Warn(what, "record", c.Label(), "err", err)
 }
 
 var systemActor = &Actor{Name: "Scheduler", Role: &Role{System: true}}
@@ -45,12 +59,12 @@ func (a *App) runSchedule(ctx context.Context) {
 		}
 		for _, c := range due {
 			if _, err := a.saveContent(ctx, systemActor, c, map[string]any{"status": "published"}); err != nil {
-				a.log.Warn("scheduled publish", "record", c.Label(), "err", err)
+				a.scheduleFailed("scheduled publish", c, err)
 			}
 		}
 		for _, c := range gone {
 			if _, err := a.saveContent(ctx, systemActor, c, map[string]any{"status": "draft", "unpublish_at": nil}); err != nil {
-				a.log.Warn("scheduled unpublish", "record", c.Label(), "err", err)
+				a.scheduleFailed("scheduled unpublish", c, err)
 			}
 		}
 	}

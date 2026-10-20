@@ -2,8 +2,11 @@ package update
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +26,11 @@ import (
 // failed, and stays on what it is.
 //
 //	DATA_DIR/releases/
-//	  2.0.4/librepublish   the binary
-//	  current              the version confirmed to run
-//	  trying               the version handed over to, not confirmed yet
-//	  failed               a version that didn't come up, and when
+//	  2.0.4/librepublish          the binary
+//	  2.0.4/librepublish.sha256   its checksum, checked before each hand-over
+//	  current                     the version confirmed to run
+//	  trying                      the version handed over to, not confirmed yet
+//	  failed                      a version that didn't come up, and when
 
 // ReleasesDir is where a data directory's releases are.
 func ReleasesDir(dataDir string) string { return filepath.Join(dataDir, "releases") }
@@ -67,11 +71,7 @@ func Stage(ctx context.Context, r Release, dataDir string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return "", err
 	}
-	tmp := path + ".new"
-	if err := os.WriteFile(tmp, bin, 0o755); err != nil { //nolint:gosec // an executable
-		return "", err
-	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := place(path, bin); err != nil {
 		return "", err
 	}
 	if err := Check(ctx, path, r.Version); err != nil {
@@ -79,6 +79,51 @@ func Stage(ctx context.Context, r Release, dataDir string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// sumFile is where a staged binary's SHA-256 is recorded, beside it.
+func sumFile(bin string) string { return bin + ".sha256" }
+
+// place writes bin (checked against checksums.txt) at path, and its
+// checksum beside it, which Choose checks the binary against before every
+// hand-over: a binary changed or put there by something other than Stage
+// isn't run.
+func place(path string, bin []byte) error {
+	sum := sha256.Sum256(bin)
+	if err := writeAtomic(sumFile(path), []byte(hex.EncodeToString(sum[:])+"\n"), 0o600); err != nil {
+		return err
+	}
+	return writeAtomic(path, bin, 0o755)
+}
+
+func writeAtomic(path string, b []byte, mode os.FileMode) error {
+	tmp := path + ".new"
+	if err := os.WriteFile(tmp, b, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// verify is whether the binary at bin is the one Stage put there: its
+// SHA-256 is the one recorded beside it.
+func verify(bin string) error {
+	want, err := os.ReadFile(sumFile(bin))
+	if err != nil {
+		return fmt.Errorf("no checksum recorded for %s: %w", bin, err)
+	}
+	f, err := os.Open(bin) //nolint:gosec // the site's own data directory
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != strings.TrimSpace(string(want)) {
+		return fmt.Errorf("%s doesn't match the checksum recorded when it was staged", bin)
+	}
+	return nil
 }
 
 // Check runs bin's `version` and wants version: a binary that can run here
@@ -150,6 +195,12 @@ func Choose(dataDir, self string) (string, bool) {
 	}
 	bin := binaryIn(dataDir, current)
 	if _, err := os.Stat(bin); err != nil {
+		return "", false
+	}
+	// Not one Stage verified, or changed since: recorded as failed, and
+	// not run.
+	if err := verify(bin); err != nil {
+		_ = writeMark(dataDir, "failed", current)
 		return "", false
 	}
 	return bin, true

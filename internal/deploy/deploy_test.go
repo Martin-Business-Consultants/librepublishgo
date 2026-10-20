@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 type memSettings struct {
@@ -68,5 +70,114 @@ func TestTriggerByRenderMode(t *testing.T) {
 				t.Fatalf("purges %d, builds %d", hits["/purge/"+tc.render], hits["/build/"+tc.render])
 			}
 		})
+	}
+}
+
+// builds counts the build hook's calls.
+func builds(t *testing.T) (*httptest.Server, func() int) {
+	t.Helper()
+	var mu sync.Mutex
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		n++
+		mu.Unlock()
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}
+}
+
+func goSpawn(wg *sync.WaitGroup) Spawn {
+	return func(ctx context.Context, _ string, fn func(context.Context)) bool {
+		wg.Go(func() { fn(ctx) })
+		return true
+	}
+}
+
+func eventually(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if ok() {
+			return
+		}
+	}
+	t.Fatal(what)
+}
+
+// A deploy waiting out its debounce when the process stops goes out when
+// the next one starts.
+func TestPendingDeploySurvivesRestart(t *testing.T) {
+	t.Parallel()
+	srv, count := builds(t)
+	settings := &memSettings{data: map[string]map[string]any{
+		"deploy": {"hook_url": srv.URL, "debounce_seconds": 3600},
+	}}
+	var wg sync.WaitGroup
+	d := New(settings, slog.New(slog.DiscardHandler), goSpawn(&wg))
+	d.Changed(t.Context(), "page:1")
+	d.Stop()
+	if p, _ := settings.Setting(t.Context(), pendingKey); p["since"] == nil {
+		t.Fatalf("nothing recorded as waiting: %v", p)
+	}
+	if count() != 0 {
+		t.Fatal("deployed before the debounce was out")
+	}
+
+	next := New(settings, slog.New(slog.DiscardHandler), goSpawn(&wg))
+	next.Resume(t.Context())
+	eventually(t, "the waiting deploy never went out", func() bool { return count() == 1 })
+	wg.Wait()
+	if p, _ := settings.Setting(t.Context(), pendingKey); len(p) != 0 {
+		t.Fatalf("still waiting after the deploy: %v", p)
+	}
+	if st, _ := settings.Setting(t.Context(), "deploy_status"); !slices.Equal(st["tags"].([]string), []string{"page:1"}) {
+		t.Fatalf("deployed tags %v", st["tags"])
+	}
+}
+
+// Changes that keep restarting the debounce still deploy by maxWait after
+// the first.
+func TestDebounceHasMaximumWait(t *testing.T) {
+	t.Parallel()
+	srv, count := builds(t)
+	settings := &memSettings{data: map[string]map[string]any{
+		"deploy": {"hook_url": srv.URL, "debounce_seconds": 3600},
+	}}
+	var wg sync.WaitGroup
+	d := New(settings, slog.New(slog.DiscardHandler), goSpawn(&wg))
+	d.Changed(t.Context(), "page:1")
+	d.mu.Lock()
+	d.since = time.Now().Add(-maxWait + 50*time.Millisecond) // as if it came in long ago
+	d.mu.Unlock()
+	d.Changed(t.Context(), "page:2")
+	eventually(t, "the deploy waited past maxWait", func() bool { return count() == 1 })
+	wg.Wait()
+	if p, _ := settings.Setting(t.Context(), pendingKey); len(p) != 0 {
+		t.Fatalf("still waiting after the deploy: %v", p)
+	}
+}
+
+// A failed deploy stays waiting, for the next start to try again.
+func TestFailedDeployStaysPending(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	settings := &memSettings{data: map[string]map[string]any{
+		"deploy": {"hook_url": srv.URL, "debounce_seconds": 3600},
+	}}
+	d := New(settings, slog.New(slog.DiscardHandler), func(context.Context, string, func(context.Context)) bool { return false })
+	d.Changed(t.Context(), "page:1")
+	if _, err := d.Trigger(t.Context(), "publish"); err == nil {
+		t.Fatal("a 502 deployed")
+	}
+	if p, _ := settings.Setting(t.Context(), pendingKey); p["since"] == nil {
+		t.Fatalf("the failed deploy was forgotten: %v", p)
 	}
 }

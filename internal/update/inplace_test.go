@@ -13,10 +13,42 @@ func stage(t *testing.T, dataDir, version string) string {
 	if err := os.MkdirAll(filepath.Dir(bin), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := place(bin, []byte("#!/bin/sh\n")); err != nil {
 		t.Fatal(err)
 	}
 	return bin
+}
+
+// A staged binary is only run while it matches the checksum recorded when
+// it was staged: one changed since, or with none recorded, is passed over
+// and recorded as failed.
+func TestChooseVerifiesTheStagedBinary(t *testing.T) {
+	t.Parallel()
+	for name, spoil := range map[string]func(bin string) error{
+		"changed": func(bin string) error { return os.WriteFile(bin, []byte("#!/bin/sh\necho evil\n"), 0o755) },
+		"no sum":  func(bin string) error { return os.Remove(sumFile(bin)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			bin := stage(t, dir, "2.0.4")
+			if err := writeMark(dir, "current", "2.0.4"); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := Choose(dir, "2.0.3"); !ok || got != bin {
+				t.Fatalf("the intact release wasn't chosen: %q %v", got, ok)
+			}
+			if err := spoil(bin); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := Choose(dir, "2.0.3"); ok {
+				t.Fatal("handed over to a binary that doesn't match its checksum")
+			}
+			if v, _ := Failed(dir); v != "2.0.4" {
+				t.Fatalf("not recorded as failed: %q", v)
+			}
+		})
+	}
 }
 
 // The hand-over: tried, confirmed by the release once it serves, chosen at

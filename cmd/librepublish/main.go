@@ -125,7 +125,7 @@ func usage(w io.Writer) {
 
 Working on a site (from a terminal, a script, or an AI app):
 
-  login        sign in to a site            https://cms.example.com [--profile NAME] [--token TOKEN]
+  login        sign in to a site            https://cms.example.com [--profile NAME] [--token - (from stdin)]
   TOOL         run one of the site's tools  e.g. list_pages --status draft, get_page about
   tools        what the site's tools are    [NAME] [--json]
   whoami       the site, you and your role
