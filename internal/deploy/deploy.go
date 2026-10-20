@@ -34,7 +34,9 @@ type Settings interface {
 type Spawn func(ctx context.Context, name string, fn func(context.Context)) bool
 
 // Debouncer rebuilds the site after content changes. Changes inside the
-// debounce window go out as one.
+// debounce window go out as one, but none waits longer than maxWait, and a
+// change still waiting is kept in settings/deploy_pending so a restart
+// doesn't lose it (Resume).
 type Debouncer struct {
 	settings Settings
 	log      *slog.Logger
@@ -43,7 +45,20 @@ type Debouncer struct {
 	tags     map[string]bool
 	timer    *time.Timer
 	stopped  bool
+	// since is when the oldest change still waiting came in; zero when
+	// nothing is.
+	since time.Time
+	// persist orders the writes of deploy_pending, so a clear can't land
+	// after the mark of a change it didn't deploy.
+	persist sync.Mutex
 }
+
+// pendingKey is the settings key a waiting deploy is kept under.
+const pendingKey = "deploy_pending"
+
+// maxWait is the longest a change waits for its deploy, however often
+// later ones restart the debounce.
+const maxWait = 5 * time.Minute
 
 // New is a debouncer configured by settings, deploying in the background
 // with spawn.
@@ -81,16 +96,33 @@ func (d *Debouncer) Changed(ctx context.Context, tags ...string) {
 		delay = time.Duration(min(s, maxDebounce)) * time.Second
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if d.stopped {
+		d.mu.Unlock()
 		return
 	}
 	if d.tags == nil {
 		d.tags = map[string]bool{}
 	}
+	grew := d.since.IsZero()
 	for _, t := range tags {
+		grew = grew || !d.tags[t]
 		d.tags[t] = true
 	}
+	if d.since.IsZero() {
+		d.since = time.Now()
+	}
+	d.schedule(ctx, delay)
+	since, all := d.since, d.tagList()
+	d.mu.Unlock()
+	if grew {
+		d.mark(ctx, since, all)
+	}
+}
+
+// schedule (re)starts the timer: delay from now, but no later than maxWait
+// after the oldest change. d.mu is held.
+func (d *Debouncer) schedule(ctx context.Context, delay time.Duration) {
+	delay = max(min(delay, maxWait-time.Since(d.since)), 0)
 	if d.timer != nil {
 		d.timer.Stop()
 	}
@@ -103,7 +135,78 @@ func (d *Debouncer) Changed(ctx context.Context, tags ...string) {
 	})
 }
 
+// tagList is the tags waiting, sorted. d.mu is held.
+func (d *Debouncer) tagList() []string {
+	tags := make([]string, 0, len(d.tags))
+	for t := range d.tags {
+		tags = append(tags, t)
+	}
+	slices.Sort(tags)
+	return tags
+}
+
+// mark records that a deploy is waiting, for Resume after a restart.
+func (d *Debouncer) mark(ctx context.Context, since time.Time, tags []string) {
+	d.persist.Lock()
+	defer d.persist.Unlock()
+	data := map[string]any{"since": since.UTC().Format(time.RFC3339Nano), "tags": tags}
+	if err := d.settings.ReplaceSetting(ctx, pendingKey, data); err != nil {
+		d.log.Warn("deploy pending", "err", err)
+	}
+}
+
+// unmark forgets the waiting deploy, unless a change came in after it
+// went out.
+func (d *Debouncer) unmark(ctx context.Context) {
+	d.persist.Lock()
+	defer d.persist.Unlock()
+	d.mu.Lock()
+	waiting := !d.since.IsZero()
+	d.mu.Unlock()
+	if waiting {
+		return
+	}
+	if err := d.settings.ReplaceSetting(ctx, pendingKey, map[string]any{}); err != nil {
+		d.log.Warn("deploy pending", "err", err)
+	}
+}
+
+// Resume deploys what was waiting when the last process stopped: a change
+// in settings/deploy_pending goes out now.
+func (d *Debouncer) Resume(ctx context.Context) {
+	p := d.settingOr(ctx, pendingKey)
+	at, err := time.Parse(time.RFC3339Nano, jsonv.String(p["since"]))
+	if err != nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopped {
+		return
+	}
+	if d.tags == nil {
+		d.tags = map[string]bool{}
+	}
+	switch list := p["tags"].(type) {
+	case []any: // read back from JSON
+		for _, t := range list {
+			if s := jsonv.String(t); s != "" {
+				d.tags[s] = true
+			}
+		}
+	case []string:
+		for _, s := range list {
+			d.tags[s] = true
+		}
+	}
+	if d.since.IsZero() || at.Before(d.since) {
+		d.since = at
+	}
+	d.schedule(ctx, 0)
+}
+
 // Stop cancels a deploy that's waiting out its debounce, and any later one.
+// What was waiting stays in deploy_pending, for the next process's Resume.
 func (d *Debouncer) Stop() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -113,17 +216,25 @@ func (d *Debouncer) Stop() {
 	}
 }
 
-// Trigger runs the deploy now and records how it went.
+// Trigger runs the deploy now, with whatever was waiting, and records how
+// it went. Once it went out, nothing is waiting any more.
 func (d *Debouncer) Trigger(ctx context.Context, reason string) (map[string]any, error) {
 	d.mu.Lock()
-	tags := make([]string, 0, len(d.tags))
-	for t := range d.tags {
-		tags = append(tags, t)
-	}
+	tags := d.tagList()
 	d.tags = map[string]bool{}
+	d.since = time.Time{}
+	if d.timer != nil {
+		d.timer.Stop()
+	}
 	d.mu.Unlock()
-	slices.Sort(tags)
+	status, err := d.trigger(ctx, reason, tags)
+	if err == nil {
+		d.unmark(ctx)
+	}
+	return status, err
+}
 
+func (d *Debouncer) trigger(ctx context.Context, reason string, tags []string) (map[string]any, error) {
 	cfg, err := d.settings.Setting(ctx, "deploy")
 	if err != nil {
 		return nil, err

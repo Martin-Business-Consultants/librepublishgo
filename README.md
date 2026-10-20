@@ -13,7 +13,14 @@ librepublish serve --data ./data
 That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no
 separate database. It idles at about 20 MB of memory, Forms included. The script picks
 the build for your machine from the latest release and checks it against the
-release's checksums. Without it, download `librepublish-<os>-<arch>` from
+release's checksums. `main` moves; to run a script you've read, pin it to a
+release tag, which doesn't (and set the version it installs to match):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/v2.7.0/install.sh | LIBREPUBLISH_VERSION=v2.7.0 sh
+```
+
+Without it, download `librepublish-<os>-<arch>` from
 [Releases](https://github.com/Martin-Business-Consultants/librepublishgo/releases)
 and run it.
 

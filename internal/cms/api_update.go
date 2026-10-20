@@ -1,6 +1,7 @@
 package cms
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,10 +108,15 @@ func (a *App) applyUpdate(c *Ctx) error {
 	a.audit(ctx, c.Actor, "cms.updated", "Site", 0, r.Version, map[string]any{"from": a.cfg.Version, "to": r.Version, "backup": backup})
 	a.log.Info("updating", "from", a.cfg.Version, "to", r.Version, "backup", backup)
 	// After this answer is on its way: the hand-over closes the server.
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		a.cfg.HandOver(bin)
-	}()
+	// Tracked, so Close waits for it; HandOver only signals, so it can't
+	// wait on Close in turn.
+	a.spawn(ctx, "hand over", func(ctx context.Context) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(500 * time.Millisecond):
+			a.cfg.HandOver(bin)
+		}
+	})
 	c.Summary = "Updating to " + r.Version + "."
 	return c.JSON(202, O("updating_to", r.Version, "from", a.cfg.Version, "backup", backup))
 }

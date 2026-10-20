@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -90,6 +91,8 @@ func login(ctx context.Context, env Env, args []string) error {
 			name = a[strings.Index(a, "=")+1:]
 		case a == "--token" && i+1 < len(args):
 			token, i = args[i+1], i+1
+		case strings.HasPrefix(a, "--token="):
+			token = strings.TrimPrefix(a, "--token=")
 		case a == "--no-browser":
 			noBrowser = true
 		case strings.HasPrefix(a, "-"):
@@ -99,7 +102,11 @@ func login(ctx context.Context, env Env, args []string) error {
 		}
 	}
 	if site == "" {
-		return errors.New("usage: librepublish login https://cms.example.com [--profile NAME] [--token TOKEN] [--no-browser]")
+		return errors.New("usage: librepublish login https://cms.example.com [--profile NAME] [--token - (read from stdin)] [--no-browser]")
+	}
+	token, err := tokenArg(env, token)
+	if err != nil {
+		return err
 	}
 	if !strings.Contains(site, "://") {
 		site = "https://" + site
@@ -107,6 +114,9 @@ func login(ctx context.Context, env Env, args []string) error {
 	u, err := url.Parse(site)
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("%q isn't a site's address", site)
+	}
+	if err := secureSite(u); err != nil {
+		return err
 	}
 	site = strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/")
 	if name == "" {
@@ -171,6 +181,12 @@ func deviceLogin(ctx context.Context, env Env, c *client, noBrowser bool) (strin
 	code.UserCode, code.DeviceCode, code.VerificationURL = fmt.Sprint(raw["user_code"]), fmt.Sprint(raw["device_code"]), fmt.Sprint(raw["verification_url"])
 	code.Interval = intOf(raw["interval"], 5)
 	code.ExpiresIn = intOf(raw["expires_in"], 900)
+	// The page to approve it on is the site's own: an answer pointing the
+	// person anywhere else (to sign in to something that isn't the site) is
+	// refused, not shown or opened.
+	if err := sameSite(c.URL, code.VerificationURL); err != nil {
+		return "", err
+	}
 	fmt.Fprintf(env.Stdout, "Approve this sign-in in the admin:\n\n    %s\n\nand check it shows the code %s. Waiting…\n", code.VerificationURL, code.UserCode)
 	if !noBrowser {
 		openBrowser(ctx, code.VerificationURL)
@@ -202,6 +218,71 @@ func deviceLogin(ctx context.Context, env Env, c *client, noBrowser bool) (strin
 		}
 	}
 	return "", errors.New("the code expired: run librepublish login again")
+}
+
+// tokenArg is --token's value: "-" reads it from stdin (`printf %s
+// "$TOKEN" | librepublish login … --token -`); one given on the command line
+// works, with a warning.
+func tokenArg(env Env, token string) (string, error) {
+	switch token {
+	case "":
+		return "", nil
+	case "-":
+		if env.Stdin == nil {
+			return "", errors.New("--token -: no stdin to read the token from")
+		}
+		line, err := bufio.NewReader(env.Stdin).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", fmt.Errorf("reading the token from stdin: %w", err)
+		}
+		if token = strings.TrimSpace(line); token == "" {
+			return "", errors.New("--token -: no token on stdin")
+		}
+		return token, nil
+	}
+	fmt.Fprintln(env.Stderr, "Warning: a token on the command line is seen by anyone who can list this machine's processes, and stays in your shell's history. Pipe it in instead: --token -")
+	return token, nil
+}
+
+// loopback is whether host is this machine, where plain http is fine.
+func loopback(host string) bool {
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// secureSite refuses a site that isn't https, but for one on this machine:
+// the token would cross the network in the clear.
+func secureSite(u *url.URL) error {
+	switch {
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http" && loopback(u.Hostname()):
+		return nil
+	}
+	return fmt.Errorf("%s isn't https: a token would cross the network readable by anyone on the way (plain http is only for localhost)", u.Redacted())
+}
+
+// sameSite is whether verification, the address a site gave for approving a
+// sign-in, is secure and on site itself (scheme, host and port).
+func sameSite(site, verification string) error {
+	s, err := url.Parse(site)
+	if err != nil {
+		return err
+	}
+	v, err := url.Parse(verification)
+	if err != nil || v.Host == "" {
+		return fmt.Errorf("the site gave %q to approve the sign-in on, which isn't an address", verification)
+	}
+	if err := secureSite(v); err != nil {
+		return fmt.Errorf("the site's sign-in page: %w", err)
+	}
+	if !strings.EqualFold(v.Scheme, s.Scheme) || !strings.EqualFold(v.Host, s.Host) {
+		return fmt.Errorf("the site gave %s to approve the sign-in on, which isn't %s: not opening it", v.Redacted(), site)
+	}
+	return nil
 }
 
 // openBrowser opens the site's sign-in page (an argument, never a shell

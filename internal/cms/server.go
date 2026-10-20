@@ -120,6 +120,7 @@ type App struct {
 	// one address to one plugin, so a form can't be flooded.
 	pluginCalls *ratelimit.Limiter
 	variants    keyedLocks
+	hits        redirectHits // redirects' hits not yet written (api_redirects.go)
 	startedAt   time.Time
 	schemas     schemaCache // the schema's digest (schema_digest.go)
 	// server is the Server the App runs behind, which can replace it (an
@@ -205,6 +206,9 @@ func (a *App) Start(ctx context.Context) error {
 	if !a.spawn(a.ctx, "scheduler", a.scheduler) {
 		return errors.New("the app is closed")
 	}
+	a.spawn(a.ctx, "redirect hits", a.countHits)
+	// A deploy the last process left waiting goes out now.
+	a.deploys.Resume(ctx)
 	if a.cfg.UpdateCheck {
 		a.spawn(a.ctx, "update check", a.checkForUpdates)
 	}
@@ -270,6 +274,7 @@ func (a *App) Close() error {
 		a.deploys.Stop()
 		a.stopSchemaTimer()
 		a.wg.Wait()
+		a.flushHits(context.Background()) // the hits counted since the last flush
 		a.err = a.store.Close()
 	})
 	return a.err
@@ -417,8 +422,14 @@ func (c *Ctx) fail(err error) {
 	var e *apierr.Error
 	switch {
 	case errors.As(err, &e):
-	case errors.Is(err, store.ErrNotFound):
+	case isNotFound(err):
 		e = apierr.NotFound("Couldn't find that.")
+	case store.IsBusy(err):
+		// Another write held the database past the busy timeout: a moment
+		// later it likely won't.
+		c.App.log.Warn("request", "path", c.R.URL.Path, "request_id", requestIDFrom(c.R.Context()), "err", err)
+		c.W.Header().Set("Retry-After", "2")
+		e = &apierr.Error{Status: 503, Code: "busy", Message: "The database is busy. Try again in a moment."}
 	default:
 		c.App.log.Error("request", "path", c.R.URL.Path, "request_id", requestIDFrom(c.R.Context()), "err", err)
 		e = &apierr.Error{Status: 500, Code: "internal_error", Message: "Something went wrong on our side."}

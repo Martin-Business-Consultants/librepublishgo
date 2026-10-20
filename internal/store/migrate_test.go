@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -182,4 +184,46 @@ func TestOpenStoreSetsAsideRailsRevisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
+}
+
+// Two processes starting on one database at once run each migration once:
+// the one that waited for the lock sees it's done.
+func TestMigrationsRunOnceAcrossProcesses(t *testing.T) {
+	t.Parallel()
+	path := openRaw(t, `SELECT 1`)
+	dsn := "file:" + path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	var runs atomic.Int32
+	list := []migration{
+		func(ctx context.Context, tx *sql.Tx) error {
+			runs.Add(1)
+			_, err := tx.ExecContext(ctx, `CREATE TABLE once (id integer)`) // fails run twice
+			return err
+		},
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	start := make(chan struct{})
+	for range 4 {
+		db, err := sql.Open("sqlite", dsn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		// Each has read user_version 0 before any migrates.
+		wg.Go(func() {
+			<-start
+			errs <- migrate(t.Context(), db, list)
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runs.Load() != 1 {
+		t.Fatalf("the migration ran %d times", runs.Load())
+	}
 }

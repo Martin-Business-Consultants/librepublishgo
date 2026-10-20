@@ -3,7 +3,10 @@
 # release (or LIBREPUBLISH_VERSION=v2.0.0), checked against the release's
 # checksums.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/go-rewrite/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/main/install.sh | sh
+#
+# main moves: pin the script to a release tag (…/librepublishgo/v2.7.0/
+# install.sh) to run the one you read.
 #
 # It goes to /usr/local/bin when that's writable, else ~/.local/bin
 # (LIBREPUBLISH_DIR=… to choose).
@@ -25,12 +28,20 @@ esac
 
 file="librepublish-$os-$arch"
 
+# Over HTTPS only, redirects included: what's fetched is what runs.
+fetch() { curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 "$@"; }
+
 # The repo's releases include the Rails core's (from main), which carry no
 # binary, so "latest" is the newest release that has this file.
 if [ -n "${LIBREPUBLISH_BASE_URL:-}" ]; then
   base="$LIBREPUBLISH_BASE_URL" # a mirror, or a local dist/ to test with
+  case "$base" in
+    https://*) ;;
+    file://*) fetch() { curl -fsSL "$@"; } ;; # local files: nothing in transit
+    *) echo "librepublish: LIBREPUBLISH_BASE_URL must be https:// (or file:// for a local dist/), not $base" >&2; exit 1 ;;
+  esac
 elif [ "$version" = latest ]; then
-  version="$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=100" |
+  version="$(fetch "https://api.github.com/repos/$repo/releases?per_page=100" |
     tr ',' '\n' | grep -E '"(tag_name|browser_download_url)"' |
     awk -v f="/$file\"" '/tag_name/ { tag = $0 } index($0, f) { print tag; exit }' |
     sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
@@ -55,10 +66,15 @@ mkdir -p "$dir"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading $file ($version)…"
-curl -fsSL "$base/$file" -o "$tmp/$file"
-curl -fsSL "$base/checksums.txt" -o "$tmp/checksums.txt"
+fetch "$base/$file" -o "$tmp/$file"
+fetch "$base/checksums.txt" -o "$tmp/checksums.txt"
 
-expected="$(grep " $file\$" "$tmp/checksums.txt" | cut -d' ' -f1)"
+# Exactly one line for the file, and a whole SHA-256 on it.
+expected="$(awk -v f="$file" '$2 == f || $2 == "*" f { print $1 }' "$tmp/checksums.txt")"
+case "$expected" in
+  *[!0-9a-f]* | "") expected="" ;;
+esac
+[ "${#expected}" = 64 ] || expected=""
 if command -v sha256sum >/dev/null 2>&1; then
   actual="$(sha256sum "$tmp/$file" | cut -d' ' -f1)"
 else

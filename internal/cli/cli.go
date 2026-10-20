@@ -83,7 +83,12 @@ func (ps *profiles) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(raw, '\n'), 0o600)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	// WriteFile's mode is only for a new file: one made looser before (or
+	// by an older build) is tightened too.
+	return os.Chmod(path, 0o600)
 }
 
 // ErrNoProfile is a command that needs a site, run before `librepublish login`.

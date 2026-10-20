@@ -12,7 +12,8 @@ import (
 	"os"
 	"strings"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // The schema keeps the Rails app's table and column names, so a database the
@@ -39,12 +40,15 @@ func Open(path string) (*DB, error) {
 	} else if err := f.Close(); err != nil {
 		return nil, err
 	}
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_txlock=immediate", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)&_txlock=immediate", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(8)
+	// As many kept idle, so a burst doesn't close and reopen connections
+	// (each one re-runs the pragmas).
+	db.SetMaxIdleConns(8)
 	if err := migrate(context.Background(), db, migrations); err != nil {
 		return nil, errors.Join(err, db.Close())
 	}
@@ -129,6 +133,17 @@ func NotFound(err error) error {
 		return ErrNotFound
 	}
 	return err
+}
+
+// IsBusy is whether err is the database being busy or locked past the busy
+// timeout: worth trying again shortly, not a fault.
+func IsBusy(err error) bool {
+	e, ok := errors.AsType[*sqlite.Error](err)
+	if !ok {
+		return false
+	}
+	code := e.Code() & 0xff // the primary code under an extended one
+	return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
 }
 
 // Placeholders is n comma-separated question marks, for IN (…).

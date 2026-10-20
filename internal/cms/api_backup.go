@@ -34,6 +34,10 @@ func (a *App) backup(c *Ctx) error {
 	if withKey && !c.Actor.Role.System {
 		return &apierr.Error{Status: 403, Code: "forbidden", Message: "Only the Administrator role can include the secret key in a backup.", Capability: wildcard}
 	}
+	// A large site's backup takes longer to gather and send than the
+	// server's write timeout allows a request; cut short, it's a broken
+	// archive.
+	_ = http.NewResponseController(c.W).SetWriteDeadline(time.Now().Add(6 * time.Hour))
 	set, err := a.prepareBackup(c.R.Context(), withKey)
 	if err != nil {
 		return err
