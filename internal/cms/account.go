@@ -11,6 +11,7 @@ import (
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
@@ -84,6 +85,13 @@ func (a *App) redeemAccountToken(ctx context.Context, token, purpose string) (us
 // forgotPassword mails a reset link to an account's address, and answers
 // the same whether or not there is one.
 func (a *App) forgotPassword(c *Ctx) error {
+	answer := func() error {
+		return c.JSON(200, O("ok", true, "message", "If that address has an account, a link to choose a new password is on its way. It works for an hour."))
+	}
+	// Counted before the body is read: a flood costs no more than a refusal.
+	if ok, _ := a.forgots.Allow("forgot:" + ratelimit.IPKey(c.ip())); !ok {
+		return answer()
+	}
 	var body struct {
 		Email string `json:"email"`
 	}
@@ -91,18 +99,14 @@ func (a *App) forgotPassword(c *Ctx) error {
 		return err
 	}
 	email := strings.ToLower(strings.TrimSpace(body.Email))
-	answer := c.JSON(200, O("ok", true, "message", "If that address has an account, a link to choose a new password is on its way. It works for an hour."))
-	if ok, _ := a.forgots.Allow("forgot:" + c.ip()); !ok {
-		return answer
-	}
-	if ok, _ := a.forgots.Allow("forgot:" + email); !ok {
-		return answer
+	if ok, _ := a.forgotAccounts.Allow("forgot:" + email); !ok {
+		return answer()
 	}
 	ctx := c.R.Context()
 	var id int64
 	var name string
 	if err := a.store.QueryRowContext(ctx, `SELECT id, name FROM users WHERE lower(email) = ?`, email).Scan(&id, &name); err != nil {
-		return answer
+		return answer()
 	}
 	token, err := a.issueAccountToken(ctx, id, purposeReset, "", resetTTL)
 	if err != nil {
@@ -116,11 +120,12 @@ func (a *App) forgotPassword(c *Ctx) error {
 		a.log.Warn("password reset email", "user", id, "err", err)
 	}
 	a.audit(ctx, nil, "password.reset_requested", "User", id, name, map[string]any{"ip": c.ip(), "sent": err == nil})
-	return answer
+	return answer()
 }
 
 // resetPassword sets a new password from a mailed link, signs the person
-// out everywhere else, and signs them in here.
+// out everywhere else (their personal and device tokens too: whoever had
+// the account may have made one), and signs them in here.
 func (a *App) resetPassword(c *Ctx) error {
 	var body struct {
 		Token    string `json:"token"`
@@ -129,8 +134,8 @@ func (a *App) resetPassword(c *Ctx) error {
 	if err := c.Body(&body); err != nil {
 		return err
 	}
-	if len(body.Password) < 10 {
-		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"password": {"is too short (minimum is 10 characters)"}}}
+	if problem := passwordProblem(body.Password); problem != "" {
+		return &apierr.Error{Status: 422, Code: "invalid", Message: "Validation failed", Errors: apierr.Invalid{"password": {problem}}}
 	}
 	ctx := c.R.Context()
 	id, _, err := a.redeemAccountToken(ctx, body.Token, purposeReset)
@@ -143,6 +148,9 @@ func (a *App) resetPassword(c *Ctx) error {
 	}
 	err = a.store.Tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_digest = ?, updated_at = ? WHERE id = ?`, hash, store.Now().DB(), id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE user_id = ?`, id); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `DELETE FROM admin_sessions WHERE user_id = ?`, id)

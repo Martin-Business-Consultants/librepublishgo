@@ -7,8 +7,15 @@ Linux, macOS and Windows.
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Martin-Business-Consultants/librepublishgo/main/install.sh | sh
 librepublish serve --data ./data
-# open http://localhost:8080/ and make the first administrator
+# open the setup address it prints (http://localhost:8080/#/setup?token=…)
+# and make the first administrator
 ```
+
+A new install answers only to its setup token: whoever reaches the address
+first can't claim it. `serve` logs the setup address (the token filled in)
+until there's a user, `librepublish setup-token --data ./data` prints it
+again, and `librepublish user create` makes the first administrator from the
+command line without it.
 
 That is the whole install. No Ruby, no Docker (though there is a Dockerfile), no
 separate database. It idles at about 20 MB of memory, Forms included. The script picks
@@ -54,9 +61,10 @@ builds every platform and publishes them with `checksums.txt`, which
 | `--addr` | `ADDR` / `PORT` | Where to listen (`:8080`). |
 | `--url` | `APP_URL` | The CMS's own address. Asset URLs start with it. |
 | | `SITE_KEY` | The tenant name webhooks carry (default: the first label of the URL's host). |
-| | `SECRET_KEY` | Instead of `DATA_DIR/secret.key`: the key that seals token plaintexts and webhook secrets. |
+| | `SECRET_KEY` | Instead of `DATA_DIR/secret.key`: a passphrase for the key that seals token plaintexts and webhook secrets. It's stretched with scrypt; what an older build sealed under it is re-sealed on the first start (`DATA_DIR/secret.stretched` records that). |
 | | `CMS_DELIVERY_RATE_LIMIT` | Requests a minute per token on `/api/v1` (1200; `0` for none). |
-| | `TRUST_PROXY=1` | Behind Caddy, nginx or a load balancer: read the client's address from `X-Forwarded-For`. |
+| | `TRUST_PROXY=1` | Behind Caddy, nginx or a load balancer: read the client's address from `X-Forwarded-For`, and HTTPS from `X-Forwarded-Proto` (answered with `Strict-Transport-Security`). |
+| | `TRUSTED_PROXY_HOPS` | With `TRUST_PROXY`, how many proxies append to `X-Forwarded-For` (1): behind a CDN and a load balancer, 2. The client is that many entries from the right. |
 | | `OUTBOUND_ALLOW_PRIVATE=1` | Let webhooks, form hooks, deploy hooks and plugins reach loopback and private networks (a site on the same box or network). Link-local and cloud metadata addresses stay out of reach. Off, they reach public addresses only (docs/webhooks.md). `HTTP(S)_PROXY` isn't used for them. |
 | | `LOG_LEVEL` | `debug`, `info` (what `serve` logs by default), `warn` or `error`. |
 | | `LOG_FORMAT` | `text` (the default) or `json`. Each request's line carries its `request_id`, which is also the `X-Request-ID` answered (a proxy's own is kept). |
@@ -189,7 +197,8 @@ What doesn't carry over is what Rails encrypted with its own key
 
 - **Personal and service tokens** still authenticate, because both cores look
   them up by SHA-256 digest. They just can't be revealed again: rotate one to
-  see a new secret. `cms login` hands a person a fresh token for the same reason.
+  see a new secret. `cms login` hands each device a fresh token of its own
+  (Your account › API & agents lists them, to disconnect one alone).
 - **Webhook secrets** can't sign. Rotate each webhook's secret (Webhooks › …,
   or `POST /api/webhooks/<id>/rotate_secret`) and give the receiver the new one.
 - **Two-factor sign-in.** An account with it on is refused at sign-in rather
@@ -228,6 +237,14 @@ CLI, MCP and agents read:
   breadcrumbs naming real records.
 - One error shape: `{"error": code, "message": …}`, with `errors` on a 422
   and `capability` on a 403.
+- The routes anyone may call (sign-in, setup, password reset, email
+  confirmation, device login) take JSON only (`Content-Type:
+  application/json`, else 415, so another site's form can't post to them)
+  and at most 64 KB. Changing your own email takes `current_password`, even
+  with a token; a password reset ends the account's sessions and personal
+  and device tokens (not service tokens). Passwords are 10 to 72 bytes.
+  Sign-in is limited per address (an IPv6 address by its /64) and per
+  account, counted apart.
 
 **The publish gate and review.** A write to something live from a role
 without `<resource>:publish` is held as a revision, not applied: **202**

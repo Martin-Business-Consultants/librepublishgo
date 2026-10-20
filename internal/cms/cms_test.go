@@ -584,10 +584,28 @@ func TestDeviceLogin(t *testing.T) {
 	}
 	s.must(200, s.do(s.admin, "POST", "/api/device/approve", map[string]any{"user_code": code}))
 	r = s.must(200, s.do("", "POST", "/api/device/token", map[string]any{"device_code": device}))
-	if r.Body["status"] != "ok" || r.Body["token"] != s.admin {
+	// The device gets a token of its own, not the person's.
+	laptop := str(r.Body["token"])
+	if r.Body["status"] != "ok" || laptop == "" || laptop == s.admin || r.Body["token_name"] != "librepublish on laptop" {
 		t.Fatalf("token: %s", r.Raw)
 	}
 	s.must(400, s.do("", "POST", "/api/device/token", map[string]any{"device_code": device}))
+	s.must(200, s.do(laptop, "GET", "/api/pages", nil))
+	s.must(200, s.do(s.admin, "GET", "/api/pages", nil))
+
+	// It's listed, and revoked alone; rotating the personal one leaves it.
+	r = s.must(200, s.do(s.admin, "GET", "/api/api_tokens", nil))
+	toks, _ := r.Body["api_tokens"].([]any)
+	if len(toks) != 2 || dig(r.Body, "api_tokens", 0, "device") != false || dig(r.Body, "api_tokens", 1, "label") != "librepublish on laptop" {
+		t.Fatalf("tokens: %s", r.Raw)
+	}
+	r = s.must(200, s.do(laptop, "POST", "/api/api_tokens/rotate", nil))
+	s.admin = str(dig(r.Body, "token", "token"))
+	s.must(200, s.do(laptop, "GET", "/api/pages", nil))
+	s.must(403, s.do(s.agent, "DELETE", "/api/api_tokens/"+jsonID(dig(toks[1], "id")), nil))
+	s.must(204, s.do(s.admin, "DELETE", "/api/api_tokens/"+jsonID(dig(toks[1], "id")), nil))
+	s.must(401, s.do(laptop, "GET", "/api/pages", nil))
+	s.must(200, s.do(s.admin, "GET", "/api/pages", nil))
 }
 
 func TestAdminSessionNeedsCSRF(t *testing.T) {

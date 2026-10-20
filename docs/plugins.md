@@ -123,6 +123,7 @@ wasn't granted to this plugin`) and does nothing.
 | `KVList(ctx, prefix, after, limit)` | `storage` | keys in order, ≤ 1000 a page, and the next page's `after` (`""` at the end) |
 | `KVAll(ctx, prefix)`, `KVCount(ctx, prefix)` | `storage` | every key under a prefix; how many |
 | `Mail(ctx, mail.Message)` | `mail` | sent through Settings › Email (from its defaults where blank); ≤ 50 recipients, ≤ 200 messages an hour |
+| `MailVisitor(ctx, mail.Message)` | `mail` | `Mail` for a message to an address a visitor gave (one `To`, no Cc/Bcc): its own ≤ 200 an hour, apart from `Mail`'s, and ≤ 3 an hour to any one address |
 | `PutMedia(ctx, plugin.Media)` | `media:write` | a file (≤ 10 MB) into the media library, answered as the media API shows it; the folder defaults to `Plugins/<key>` |
 | `HTTP()` | `http` | an `*http.Client` that reaches only the granted hosts (redirects included) and reads ≤ 4 MB of a response; `@site` (`plugin.SiteHosts`) among them grants the site's own hosts, its public URL's and its allowed origins', as they are at each request |
 | `Emit(ctx, event, data)` | the event in `Events` | sends it to webhooks and plugins, in the background |

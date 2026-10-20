@@ -16,6 +16,7 @@ var notTags = []string{
 	"<https://example.com/a?b=c>", "<mailto:you@example.com>", "<you@example.com>", "<tel:+15550100>",
 	"&lt;strong&gt;bold&lt;/strong&gt;", "<p unclosed", "1 <p 2", "<strong", "</", "</ p>", "<!", "<! x>", "<?", "<? x",
 	"\\(^o^)/ <(^_^)>",
+	"Map<String, Online>", "<name only>", "<x onclick>", "a</b", "<3 <3", "x<y && y>z",
 }
 
 // tags is HTML, in any text field.
@@ -24,6 +25,10 @@ var tags = []string{
 	"<a href=\"/x\">x</a>", "<img src=x onerror=alert(1)>", "<script>alert(1)</script>", "<em\n>x</em>", "<h2>", "<span\tclass=a>",
 	"<svg onload=alert(1)>", "<!-- note -->", "<!-- unclosed", "<!DOCTYPE html>", "<![CDATA[x]]>", "<?php echo 1 ?>",
 	"<b and c>", "<a title=\"x>y\">", "<IFRAME SRC=x>", "<math>", "<foreignObject>",
+	// A / reads as a space between a tag's name and its attributes, and an
+	// element nobody defined still runs its handlers.
+	"<img/src=x onerror=alert(1)>", "<svg/onload=alert(1)>", "<IMG/SRC=x/ONERROR=alert(1)>", "<xss onmouseover=alert(1)>",
+	"<my-widget onclick=\"go()\">", "x <details/open/ontoggle=alert(1)>", "</p/>",
 }
 
 func TestHasHTML(t *testing.T) {
@@ -115,6 +120,31 @@ func FuzzMarkdownHasHTML(f *testing.F) {
 			t.Fatalf("%q<p> wasn't refused as plain text", s)
 		}
 	})
+}
+
+func TestMarkdownUnsafeLink(t *testing.T) {
+	t.Parallel()
+	for _, md := range []string{
+		"[x](javascript:alert(1))", "[x](JavaScript:alert(1) \"t\")", "![i](javascript:alert(1))", "<javascript:alert(1)>",
+		"[x](javascript&#58;alert(1))", "[x](&#106;avascript:alert(1))", "[x](data:text/html,<script>x</script>)",
+		"[x][r]\n\n[r]: vbscript:msgbox(1)", "- a [x](javascript:void(0))",
+	} {
+		if !MarkdownUnsafeLink(md) {
+			t.Errorf("MarkdownUnsafeLink(%q) = false, want true", md)
+		}
+		if got := markupProblem("markdown", md); got != MarkdownLinkMessage && got != MarkdownHTMLMessage {
+			t.Errorf("markupProblem(%q) = %q", md, got)
+		}
+	}
+	for _, md := range []string{
+		"", "plain", "[x](https://x.test/a?b=1)", "[x](/about)", "[x](#top)", "[x](mailto:you@example.com)", "[x](tel:+15550100)",
+		"<https://example.com>", "<you@example.com>", "![logo](/files/a/logo.png)", "`[x](javascript:alert(1))`",
+		"```\n[x](javascript:alert(1))\n```", "Ratio 3:1, at 10:30", "\\[x](javascript:alert(1)) is how not to",
+	} {
+		if MarkdownUnsafeLink(md) {
+			t.Errorf("MarkdownUnsafeLink(%q) = true, want false", md)
+		}
+	}
 }
 
 func TestValidateDataMarkup(t *testing.T) {

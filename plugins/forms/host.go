@@ -79,6 +79,14 @@ func (c *call) sendMail(m mail.Message) string {
 	return ""
 }
 
+// sendVisitorMail is sendMail for a visitor's confirmation (MailVisitor).
+func (c *call) sendVisitorMail(m mail.Message) string {
+	if err := c.api.MailVisitor(c.ctx, m); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 type upload struct {
 	ID       int64  `json:"id"`
 	URL      string `json:"url"`

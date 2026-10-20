@@ -17,7 +17,7 @@ import (
 //go:embed all:dist
 var dist embed.FS
 
-const csp = "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+const csp = "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 
 // Handler serves the admin at the install's root: the CMS is headless
 // (the site is another app), so its own address is the admin. It answers

@@ -25,7 +25,13 @@ The editor's tabs: **General** (name, slug, status, the site's URLs),
   the message, which email field replies go to, and a from name and address
   for this form. Blank ones use Settings › Email.
 - **User Confirmation**: sent to the address they typed in the email field
-  you choose, with its own subject, message, reply-to and from.
+  you choose, with its own subject, message, reply-to and from. Anyone can
+  type any address there, so in this message `{{ all_fields }}` leaves out
+  paragraph (textarea) answers: the site doesn't mail free text it was
+  sent, under its own name, to whoever was named (`{{ <its name> }}` still
+  puts one in, if you choose to). At most 3 confirmations an hour go to any
+  one address, and confirmations have their own 200 an hour, apart from the
+  submission emails, so a flood of posts can't stop those.
 - **Messages** are rich text (Tiptap) and start from boilerplate. The values
   they can use are listed beside them: drag one into the message, or click it
   in at the cursor. They're sent as HTML (answers escaped, `{{ all_fields }}`

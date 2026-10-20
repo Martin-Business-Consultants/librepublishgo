@@ -50,8 +50,8 @@ func (a *App) DisableTwoFactor(ctx context.Context, email string) error {
 
 // SetPassword is the command line's way back in for someone locked out.
 func (a *App) SetPassword(ctx context.Context, email, password string) error {
-	if len(password) < 10 {
-		return fmt.Errorf("the password needs at least 10 characters")
+	if problem := passwordProblem(password); problem != "" {
+		return fmt.Errorf("the password %s", problem)
 	}
 	hash, err := secret.HashPassword(password)
 	if err != nil {

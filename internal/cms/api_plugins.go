@@ -10,6 +10,7 @@ import (
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
 )
 
 func (a *App) pluginRoutes(h func(string, handlerFunc, ...func(*route))) {
@@ -195,7 +196,7 @@ func (a *App) pluginRoute(c *Ctx) error {
 		return apierr.NotFound("Plugin " + p.Key + " has no route " + c.R.Method + " " + path + ".")
 	}
 	if rt.Public && c.Actor == nil {
-		if ok, wait := a.pluginCalls.Allow(p.Key + " " + c.ip()); !ok {
+		if ok, wait := a.pluginCalls.Allow(p.Key + " " + ratelimit.IPKey(c.ip())); !ok {
 			c.W.Header().Set("Retry-After", strconv.Itoa(wait))
 			return &apierr.Error{Status: 429, Code: "rate_limited", Message: "Too many requests; try again in a minute."}
 		}

@@ -63,3 +63,44 @@ func TestNoLimit(t *testing.T) {
 		t.Errorf("Describe() = %q", d)
 	}
 }
+
+func TestFloodEvictsOldestOnly(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		l := New(1)
+		l.Allow("target")
+		time.Sleep(time.Second)
+		// A flood of new keys after it: the oldest go, not every one.
+		for i := range maxRateKeys {
+			l.Allow(fmt.Sprint("k", i))
+			if i%1000 == 0 {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		if n := len(l.window); n > maxRateKeys || n < maxRateKeys/2 {
+			t.Fatalf("%d keys remembered after the flood", n)
+		}
+		if l.window["target"] != nil {
+			t.Fatal("the oldest key outlived the flood")
+		}
+		if ok, _ := l.Allow(fmt.Sprint("k", maxRateKeys-1)); ok {
+			t.Fatal("a key the flood just opened was forgotten")
+		}
+	})
+}
+
+func TestIPKey(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"203.0.113.9":                   "203.0.113.9",
+		"::ffff:203.0.113.9":            "203.0.113.9",
+		"2001:db8:1:2:3:4:5:6":          "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff:ffff:ffff:1": "2001:db8:1:2::/64",
+		"fe80::1%eth0":                  "fe80::/64",
+		"not an address":                "not an address",
+	} {
+		if got := IPKey(in); got != want {
+			t.Errorf("IPKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
