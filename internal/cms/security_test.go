@@ -76,6 +76,106 @@ func TestNoOneActsAboveTheirRole(t *testing.T) {
 	s.must(200, s.do(bob, "POST", "/api/service_tokens/"+site+"/reveal", nil))
 	s.must(200, s.do(bob, "POST", "/api/service_tokens/"+site+"/rotate", nil))
 	s.must(200, s.do(s.admin, "POST", "/api/service_tokens/"+root+"/reveal", nil))
+	// Revoking is taking down whatever runs on it: the same reach.
+	s.must(403, s.do(bob, "POST", "/api/service_tokens/"+root+"/revoke", nil))
+	s.must(200, s.do(s.admin, "POST", "/api/service_tokens/"+root+"/reveal", nil))
+	s.must(200, s.do(bob, "POST", "/api/service_tokens/"+site+"/revoke", nil))
+	s.must(404, s.do(bob, "POST", "/api/service_tokens/999999/revoke", nil))
+}
+
+// TestPublishGateHasNoSideDoors: an actor without publish can't reach live
+// content around the gate.
+func TestPublishGateHasNoSideDoors(t *testing.T) {
+	t.Parallel()
+	s := newSite(t)
+	ctx := t.Context()
+
+	// A scheduled draft is reviewed like a live page: the scheduler would
+	// publish whatever it holds.
+	s.must(201, s.do(s.admin, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "launch", "title": "Launch", "publish_at": "2999-01-01T00:00:00Z"}}))
+	r := s.must(202, s.do(s.agent, "PATCH", "/api/pages/launch", map[string]any{"page": map[string]any{"title": "Unreviewed"}}))
+	if dig(r.Body, "status") != "pending_review" {
+		t.Fatalf("held: %s", r.Raw)
+	}
+	if got := dig(s.must(200, s.do(s.admin, "GET", "/api/pages/launch", nil)).Body, "page", "title"); got != "Launch" {
+		t.Fatalf("scheduled draft took the write: %v", got)
+	}
+	s.must(200, s.do(s.admin, "POST", "/api/revisions/"+jsonID(dig(r.Body, "revision", "id"))+"/approve", nil))
+	if got := dig(s.must(200, s.do(s.admin, "GET", "/api/pages/launch", nil)).Body, "page", "title"); got != "Unreviewed" {
+		t.Fatalf("approved, title %v", got)
+	}
+	// An unscheduled draft still takes writes directly.
+	s.must(201, s.do(s.agent, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "notes", "title": "Notes"}}))
+	s.must(200, s.do(s.agent, "PATCH", "/api/pages/notes", map[string]any{"page": map[string]any{"title": "Notes 2"}}))
+
+	// A page's fields: a live page's need publish; a draft's don't. The
+	// edit lock holds as it does for content.
+	fields := map[string]any{"fields": []any{map[string]any{"name": "tagline", "type": "text"}}}
+	s.must(201, s.do(s.admin, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "pricing", "title": "Pricing", "status": "published"}}))
+	s.must(403, s.do(s.agent, "PATCH", "/api/pages/pricing/schema", fields))
+	s.must(403, s.do(s.agent, "PATCH", "/api/pages/launch/schema", fields))
+	s.must(200, s.do(s.admin, "PATCH", "/api/pages/pricing/schema", fields))
+	r = s.must(200, s.do(s.agent, "GET", "/api/pages/notes", nil))
+	lv, _ := intOf(dig(r.Body, "page", "lock_version"))
+	s.must(409, s.do(s.agent, "PATCH", "/api/pages/notes/schema", map[string]any{"fields": fields["fields"], "lock_version": lv + 1}))
+	s.must(200, s.do(s.agent, "PATCH", "/api/pages/notes/schema", map[string]any{"fields": fields["fields"], "lock_version": lv}))
+	s.must(200, s.do(s.admin, "POST", "/api/locks", map[string]any{"type": "page", "id": dig(r.Body, "page", "id")}))
+	s.must(409, s.do(s.agent, "PATCH", "/api/pages/notes/schema", fields))
+
+	// Moving a draft parent moves the published page under it: refused.
+	r = s.must(201, s.do(s.agent, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "about", "title": "About"}}))
+	about := dig(r.Body, "page", "id")
+	s.must(201, s.do(s.admin, "POST", "/api/pages", map[string]any{"page": map[string]any{"slug": "team", "title": "Team", "parent_id": about, "status": "published"}}))
+	r = s.must(403, s.do(s.agent, "PATCH", "/api/pages/about", map[string]any{"page": map[string]any{"slug": "company"}}))
+	if !bytes.Contains(r.Raw, []byte("pages:publish")) {
+		t.Fatalf("refusal: %s", r.Raw)
+	}
+	s.must(200, s.do(s.admin, "GET", "/api/pages/about/team", nil))
+	// Retitling it moves nothing.
+	s.must(200, s.do(s.agent, "PATCH", "/api/pages/about", map[string]any{"page": map[string]any{"title": "About us"}}))
+	// A publisher moves it.
+	s.must(200, s.do(s.admin, "PATCH", "/api/pages/about", map[string]any{"page": map[string]any{"slug": "company"}}))
+	s.must(200, s.do(s.admin, "GET", "/api/pages/company/team", nil))
+
+	// The trash: a draft parent takes its published child, so that needs
+	// publish; and so does bringing a published page back.
+	s.must(201, s.do(s.admin, "POST", "/api/roles", map[string]any{"role": map[string]any{"name": "Tidier", "permissions": []string{
+		"pages:read", "pages:write", "pages:delete", "trash:read", "trash:write", "globals:read", "globals:write"}}}))
+	tidier, err := s.app.CreateServiceTokenForRole(ctx, "TIDIER", "Tidier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.must(403, s.do(tidier, "DELETE", "/api/pages/company", nil))
+	s.must(403, s.do(tidier, "POST", "/api/pages/bulk_destroy", map[string]any{"paths": []string{"company"}}))
+	s.must(200, s.do(s.admin, "GET", "/api/pages/company/team", nil))
+	s.must(204, s.do(tidier, "DELETE", "/api/pages/notes?override_lock=1", nil))
+	s.must(204, s.do(s.admin, "DELETE", "/api/pages/company", nil))
+	s.must(404, s.do(s.admin, "GET", "/api/pages/company/team", nil))
+	var companyID, pricingID, notesID int64
+	for path, id := range map[string]*int64{"company": &companyID, "pricing": &pricingID, "notes": &notesID} {
+		if err := s.app.store.QueryRowContext(ctx, `SELECT id FROM pages WHERE path = ?`, path).Scan(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restore := func(id int64) string { return "/api/trash/page/" + strconv.FormatInt(id, 10) + "/restore" }
+	s.must(403, s.do(tidier, "POST", restore(companyID), nil)) // a draft, but its child is published
+	s.must(200, s.do(tidier, "POST", restore(notesID), nil))
+	s.must(204, s.do(s.admin, "DELETE", "/api/pages/pricing", nil))
+	s.must(403, s.do(tidier, "POST", restore(pricingID), nil))
+	s.must(200, s.do(s.admin, "POST", restore(companyID), nil))
+	s.must(200, s.do(s.admin, "GET", "/api/pages/company/team", nil))
+
+	// Globals have no draft: making one, or restoring one, is publishing.
+	s.must(403, s.do(s.agent, "POST", "/api/globals", map[string]any{"global": map[string]any{"slug": "banner", "name": "Banner"}}))
+	s.must(403, s.do(tidier, "POST", "/api/globals", map[string]any{"global": map[string]any{"slug": "banner", "name": "Banner"}}))
+	s.must(201, s.do(s.admin, "POST", "/api/globals", map[string]any{"global": map[string]any{"slug": "banner", "name": "Banner"}}))
+	s.must(204, s.do(s.admin, "DELETE", "/api/globals/banner", nil))
+	var bannerID int64
+	if err := s.app.store.QueryRowContext(ctx, `SELECT id FROM globals WHERE slug = 'banner'`).Scan(&bannerID); err != nil {
+		t.Fatal(err)
+	}
+	s.must(403, s.do(tidier, "POST", "/api/trash/global/"+strconv.FormatInt(bannerID, 10)+"/restore", nil))
+	s.must(200, s.do(s.admin, "POST", "/api/trash/global/"+strconv.FormatInt(bannerID, 10)+"/restore", nil))
 }
 
 func roleIDByName(t *testing.T, s *site, name string) string {

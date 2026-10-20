@@ -229,7 +229,11 @@ proposal for the same record is a **409**. A write that changes nothing is
 `{"status": "unchanged"}`. A person approves the revision in the admin
 (Review) or with `POST /api/revisions/<id>/approve`, which applies it as
 theirs. In the Rails core this lives in a plugin. Here it's core, because
-agents depend on it.
+agents depend on it. A draft with a `publish_at` counts as live (the
+scheduler would publish it unreviewed). Without publish, these are refused
+outright (403): changing a live page's fields, moving or trashing a page that
+takes published pages under it along, restoring a published record or any
+global from the trash, and making a global (globals have no draft).
 
 **The delivery API (`/api/v1`)**: `site`, `content` (with `?since=` cursors
 and `removed`), `pages`, `collections`, `entries`, `globals`, `schema`,

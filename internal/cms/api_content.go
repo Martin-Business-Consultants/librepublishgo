@@ -258,9 +258,20 @@ func (a *App) updatePageSchema(c *Ctx, path string) error {
 	if err != nil {
 		return err
 	}
+	// A live page's fields are what the site renders it with: changing them
+	// is publishing. A review can't carry a schema, so it's refused.
+	if (p.Status == "published" || p.PublishAt.Valid) && !c.can("pages:publish") {
+		return apierr.Forbidden("pages:publish")
+	}
+	if err := a.checkLock(c, "page", p.ID); err != nil {
+		return err
+	}
 	var body map[string]any
 	if err := c.Body(&body); err != nil {
 		return err
+	}
+	if lv, ok := intOf(body["lock_version"]); ok && int(lv) != p.LockVersion {
+		return staleWrite(lv, int64(p.LockVersion))
 	}
 	schema := body["schema"]
 	if pg, ok := body["page"].(map[string]any); ok && schema == nil {
@@ -275,7 +286,10 @@ func (a *App) updatePageSchema(c *Ctx, path string) error {
 	if err := inv.Err(); err != nil {
 		return err
 	}
-	if _, err := a.store.ExecContext(c.R.Context(), `UPDATE pages SET schema = ?, updated_at = ? WHERE id = ?`, string(normalized), store.Now().DB(), p.ID); err != nil {
+	// Not bumping lock_version: the fields aren't the content, and an editor
+	// open on the page saves its content next.
+	res, err := a.store.ExecContext(c.R.Context(), `UPDATE pages SET schema = ?, updated_at = ? WHERE id = ? AND lock_version = ?`, string(normalized), store.Now().DB(), p.ID, p.LockVersion)
+	if err := wroteOver(res, err, p.LockVersion); err != nil {
 		return err
 	}
 	a.audit(c.R.Context(), c.Actor, "page.schema_updated", "Page", p.ID, p.Label(), nil)
@@ -298,6 +312,9 @@ func (a *App) destroyPage(c *Ctx) error {
 func (a *App) destroyContent(c *Ctx, rec *Content) error {
 	if rec.Live() && !c.can(rec.Prefix()+":publish") {
 		return apierr.Forbidden(rec.Prefix() + ":publish")
+	}
+	if err := a.mayCarry(c.R.Context(), c.Actor, rec, false, "go to the trash"); err != nil {
+		return err
 	}
 	if err := a.checkLock(c, rec.Kind, rec.ID); err != nil {
 		return err
@@ -329,6 +346,9 @@ func (a *App) bulkDestroy(kind string) handlerFunc {
 		for _, r := range recs {
 			if r.Live() && !c.can(prefix+":publish") {
 				return apierr.Forbidden(prefix + ":publish")
+			}
+			if err := a.mayCarry(c.R.Context(), c.Actor, r, false, "go to the trash"); err != nil {
+				return err
 			}
 		}
 		deleted := []string{}
