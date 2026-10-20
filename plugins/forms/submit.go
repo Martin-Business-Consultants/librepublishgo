@@ -45,6 +45,10 @@ type Submission struct {
 	// hook log.
 	HookSteps []HookStep `json:"hook_steps,omitempty"`
 	HookCall  string     `json:"hook_call,omitempty"`
+	// HookTables are the hook's values that are tables (rows of label and
+	// value: a price breakdown), drawn as tables in HTML email; Hook has each
+	// as text too, for everything else.
+	HookTables map[string][]HookRow `json:"hook_tables,omitempty"`
 }
 
 func newID() string {
@@ -265,6 +269,9 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 		if len(hook.values) > 0 {
 			sub.Hook = hook.values
 		}
+		if len(hook.tables) > 0 {
+			sub.HookTables = hook.tables
+		}
 	}
 
 	// Kept first, then emailed: a slow mail server can't lose a submission.
@@ -300,9 +307,12 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 // submissionEvent is the submission.created webhook's data: the answers,
 // and what the form's hook added ({} when nothing).
 func submissionEvent(f Form, s Submission) map[string]any {
-	hook := s.Hook
-	if hook == nil {
-		hook = map[string]string{}
+	hook := map[string]any{}
+	for k, v := range s.Hook {
+		hook[k] = v
+	}
+	for k, rows := range s.HookTables {
+		hook[k] = rows // a webhook gets the rows, not their text
 	}
 	return map[string]any{"form": f.Slug, "form_name": f.Name, "submission_id": s.ID, "submitted_at": s.SubmittedAt,
 		"values": s.Values, "hook": hook}
@@ -546,6 +556,12 @@ func render(tpl string, f Form, s Submission, st plugin.Site) (text, htmlOut str
 	}
 	esc["all_fields"] = answersTable(f, s)
 	body := allFieldsPar.ReplaceAllString(tpl, esc["all_fields"])
+	for name, rows := range s.HookTables {
+		esc[name] = rowsTable(rows)
+		// A table on its own line replaces its paragraph: a table can't be in one.
+		par := regexp.MustCompile(`<p>\s*\{\{\s*` + regexp.QuoteMeta(name) + `\s*\}\}\s*</p>`)
+		body = par.ReplaceAllLiteralString(body, esc[name])
+	}
 	body = fill(body, esc)
 	return fill(htmlToText(tpl), plain), frame(body, st)
 }
@@ -569,6 +585,23 @@ func frame(body string, st plugin.Site) string {
 	fmt.Fprintf(&b, `<div style="background:#fff;border:1px solid #e5e5e7;border-top:4px solid %s;border-radius:8px;padding:24px;font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:%s">`, primary, text)
 	b.WriteString(body)
 	b.WriteString(`</div></div></body></html>`)
+	return b.String()
+}
+
+// rowsTable is a hook's table value in HTML, styled as the answers are; a
+// row marked strong (a total) is bold.
+func rowsTable(rows []HookRow) string {
+	var b strings.Builder
+	b.WriteString(`<table role="presentation" style="width:100%;border-collapse:collapse;margin:8px 0">`)
+	for _, r := range rows {
+		weight := ""
+		if r.Strong {
+			weight = "font-weight:600;"
+		}
+		fmt.Fprintf(&b, `<tr><td style="padding:6px 12px 6px 0;vertical-align:top;border-top:1px solid #f0f0f1;%s">%s</td><td style="padding:6px 0;vertical-align:top;text-align:right;white-space:nowrap;border-top:1px solid #f0f0f1;%s">%s</td></tr>`,
+			weight, html.EscapeString(r.Label), weight, html.EscapeString(r.Value))
+	}
+	b.WriteString(`</table>`)
 	return b.String()
 }
 

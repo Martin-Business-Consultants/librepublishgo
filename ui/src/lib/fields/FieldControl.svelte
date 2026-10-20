@@ -22,12 +22,16 @@
   // A select's choices can come from the record itself: the fields a
   // form builder holds, of some types ({builder: "fields", types: ["email"]}).
   // A message's merge tags: the builder's fields, then the plugin's own
-  // ({builder: "fields", extra: [{name, label}]}).
+  // ({builder: "fields", extra: [{name, label}]}), then any the record
+  // carries ({record: "hook_tags", record_group}: what the form's hook has
+  // added lately), each group under its heading.
   const mergeTags = $derived.by(() => {
     const m = f.merge_tags;
     if (!m) return [];
-    const fromFields = (data[m.builder] || []).filter((x) => x.name && x.type !== "heading").map((x) => ({ name: x.name, label: x.label || x.name }));
-    return [...fromFields, ...(m.extra || [])];
+    const fromFields = (data[m.builder] || []).filter((x) => x.name && x.type !== "heading").map((x) => ({ name: x.name, label: x.label || x.name, group: "Answers" }));
+    const taken = new Set([...fromFields.map((t) => t.name), ...(m.extra || []).map((t) => t.name)]);
+    const fromRecord = (m.record ? data[m.record] || [] : []).filter((t) => t.name && !taken.has(t.name)).map((t) => ({ ...t, group: m.record_group || "More" }));
+    return [...fromFields, ...(m.extra || []).map((t) => ({ ...t, group: "This form" })), ...fromRecord];
   });
   const options = $derived.by(() => {
     const from = f.options_from;

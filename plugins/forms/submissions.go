@@ -181,7 +181,7 @@ func (c *call) showSubmission() *plugin.Response {
 	}
 	hookKeys := slices.Sorted(maps.Keys(s.Hook))
 	for _, k := range hookKeys {
-		answers = append(answers, map[string]any{"label": k + " (from the hook)", "value": s.Hook[k]})
+		answers = append(answers, map[string]any{"label": k + " (from the hook)", "value": s.Hook[k], "multiline": strings.Contains(s.Hook[k], "\n")})
 	}
 	hook := []map[string]any{}
 	if s.HookStatus != "" {

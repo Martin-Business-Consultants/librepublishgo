@@ -177,12 +177,30 @@ and waits for its answer, up to 6 seconds:
   every key optional: the visitor goes to `redirect` (a path on the site, or
   an address on one of its origins) instead of the form's own thank-you, sees
   `message` instead of its own, and `values` are kept with the submission
-  (shown with it, in the CSV, and as merge tags in its emails: `{{ quote_id }}`).
+  (shown with it, in the CSV, as merge tags in its emails: `{{ quote_id }}`,
+  and to webhooks as `hook.quote_id`).
 - **422** `{"message": "…", "errors": {"zip": ["isn't in our service area"]}}`:
   the visitor is refused with those errors, beside their fields, and nothing
   is kept or sent.
 - Anything else (down, slow, another status): the submission goes through as
   the form says, and the failure is noted on it. A hook never loses one.
+
+A value can be a **table**: a list of rows, `{"label", "value", "strong"?}`
+(`strong` for a total), as a quote tool's price breakdown is:
+
+```json
+"values": {"monthly_price": "$189",
+           "pricing": [{"label": "16 ft container", "value": "$189/mo"},
+                       {"label": "Delivery & pickup", "value": "$89"},
+                       {"label": "Due before delivery", "value": "$278", "strong": true}]}
+```
+
+In an HTML email `{{ pricing }}` is a table (on a line of its own, it takes
+the line's place, as `{{ all_fields }}` does); in the plain-text copy, the
+CSV and the submission it's a line a row (`Delivery & pickup: $89`); a
+webhook gets the rows. The message editor lists the values the hook has
+added lately (from its hook log) beside the message, under **From the
+hook**, so they can be dragged in.
 
 Either answer can say what the hook did, for the CMS to show as it says it:
 `"steps": [{"label": "Zip check", "status": "ok", "detail": "32207 served"},
@@ -238,8 +256,11 @@ the subject:
 - the visitor's confirmation to `testing_client_to`, else the first
   `testing_to`.
 
-Nothing is kept, the hook isn't called (no quote is made) and webhooks don't
-hear of it. `POST /api/x/forms/form/test?id=<slug>` with `{"form": {…}}`
+When the form has a hook, Send test calls it first as a test (`"test":
+true`, as Test hook does), and its values (prices, say) are in the test
+emails; if it refuses the sample answers or fails, the emails go without
+them, and the message says why. Nothing is kept but that call, in the hook
+log, and webhooks don't hear of it. `POST /api/x/forms/form/test?id=<slug>` with `{"form": {…}}`
 does the same; it answers 422 without a testing address or with neither
 email on.
 

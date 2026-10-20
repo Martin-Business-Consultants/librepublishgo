@@ -361,7 +361,7 @@ func TestFormsShowIfAndHook(t *testing.T) {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
-		io.WriteString(w, `{"redirect":"/thanks?q=Q-42","values":{"quote_id":"Q-42","bad key":"x"},"steps":[{"label":"Zip check","status":"ok","detail":"32207 served"},{"label":"Quote","status":"ok","detail":"Q-42"},{"label":"","status":"ok"},{"label":"Odd","status":"weird"}]}`)
+		io.WriteString(w, `{"redirect":"/thanks?q=Q-42","values":{"quote_id":"Q-42","bad key":"x","pricing":[{"label":"Monthly","value":"$189"},{"label":"Total","value":"$278","strong":true}]},"steps":[{"label":"Zip check","status":"ok","detail":"32207 served"},{"label":"Quote","status":"ok","detail":"Q-42"},{"label":"","status":"ok"},{"label":"Odd","status":"weird"}]}`)
 	}
 	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -518,7 +518,8 @@ func TestFormsShowIfAndHook(t *testing.T) {
 		t.Fatalf("mail: %+v", got)
 	}
 	s.app.hooks.Wait()
-	if len(events) != 1 || dig(events[0], "event") != "submission.created" || dig(events[0], "data", "values", "zip") != "32207" || dig(events[0], "data", "hook", "quote_id") != "Q-42" {
+	if len(events) != 1 || dig(events[0], "event") != "submission.created" || dig(events[0], "data", "values", "zip") != "32207" || dig(events[0], "data", "hook", "quote_id") != "Q-42" ||
+		dig(events[0], "data", "hook", "pricing", 1, "value") != "$278" || dig(events[0], "data", "hook", "pricing", 1, "strong") != true {
 		t.Fatalf("webhook: %v", events)
 	}
 	var sent map[string]any
@@ -580,7 +581,7 @@ func TestFormsShowIfAndHook(t *testing.T) {
 		t.Fatalf("submission: %s", r.Raw)
 	}
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions.csv?form=quote", nil))
-	if !strings.Contains(string(r.Raw), ",quote_id") || !strings.Contains(string(r.Raw), ",Q-42") {
+	if !strings.Contains(string(r.Raw), ",quote_id") || !strings.Contains(string(r.Raw), ",Q-42") || !strings.Contains(string(r.Raw), "Monthly: $189\nTotal: $278") {
 		t.Fatalf("csv: %s", r.Raw)
 	}
 
@@ -671,15 +672,21 @@ func TestFormsSendTest(t *testing.T) {
 	mailer := &captureMailer{}
 	s := newSiteWith(t, Config{Mailer: mailer})
 	var hooked, delivered int
+	var hookPosts []map[string]any
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		if r.URL.Path == "/hook" {
-			hooked++
-		} else {
+		defer mu.Unlock()
+		if r.URL.Path != "/hook" {
 			delivered++
+			return
 		}
-		mu.Unlock()
+		hooked++
+		var post map[string]any
+		json.NewDecoder(r.Body).Decode(&post)
+		hookPosts = append(hookPosts, post)
+		// A quote tool's prices: a value, and a table.
+		io.WriteString(w, `{"values":{"monthly_price":"$189","pricing":[{"label":"16 ft container","value":"$189/mo"},{"label":"Delivery & pickup","value":"$89"},{"label":"Due before delivery","value":"$278","strong":true}]}}`)
 	}))
 	defer srv.Close()
 	s.must(200, s.do(s.admin, "PATCH", "/api/settings/email", map[string]any{"setting": map[string]any{"data": map[string]any{
@@ -698,6 +705,7 @@ func TestFormsSendTest(t *testing.T) {
 			map[string]any{"type": "email", "name": "email", "label": "Email", "required": true},
 		},
 		"admin_enabled": true, "admin_to": []any{"owner@client.test"}, "admin_cc": []any{"boss@client.test"}, "admin_subject": "Quote from {{ first_name }}",
+		"admin_message":  "<p>From {{ monthly_price }} a month.</p><p>{{ pricing }}</p><p>{{ all_fields }}</p><p>Received {{ date }}.</p>",
 		"client_enabled": true, "client_to_field": "email", "client_subject": "Thanks",
 		"hook_url": srv.URL + "/hook", "hook_secret": "s3cret",
 	}
@@ -727,15 +735,34 @@ func TestFormsSendTest(t *testing.T) {
 	if !slices.Equal(client.to, []string{"me@agency.test"}) || !strings.Contains(client.raw, "Subject: [Test] Thanks") {
 		t.Fatalf("client mail to %v:\n%s", client.to, client.raw)
 	}
-	// In the brand's colors, dated in words.
+	// The hook was called as a test, and its values are in: a price, and a
+	// table, drawn as one in HTML and as lines in text.
+	if hooked != 1 || hookPosts[0]["test"] != true {
+		t.Fatalf("hook: %d calls, %v", hooked, hookPosts)
+	}
 	body, _ := io.ReadAll(quotedprintable.NewReader(strings.NewReader(admin.raw)))
+	for _, want := range []string{"From $189 a month.", "16 ft container", "Due before delivery: $278", `font-weight:600;">$278</td>`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("missing %q in the test email:\n%s", want, body)
+		}
+	}
+	if strings.Contains(string(body), "<p><table") {
+		t.Fatalf("a table in a paragraph:\n%s", body)
+	}
+	// The editor's sidebar now offers what the hook adds.
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/form?id=quote", nil))
+	if dig(r.Body, "form", "hook_tags", 0, "name") != "monthly_price" || dig(r.Body, "form", "hook_tags", 1, "name") != "pricing" ||
+		dig(r.Body, "form", "hook_tags", 1, "hint") != "A table, from the hook" {
+		t.Fatalf("hook tags: %s", r.Raw)
+	}
+	// In the brand's colors, dated in words.
 	if !strings.Contains(string(body), "border-top:4px solid #e4002b") || !strings.Contains(string(body), "color:#1f2a44") ||
 		!strings.Contains(string(body), time.Now().In(time.Local).Format("January 2, 2006")) {
 		t.Fatalf("branded body:\n%s", body)
 	}
 	s.app.hooks.Wait()
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
-	if rows, _ := r.Body["submissions"].([]any); len(rows) != 0 || hooked != 0 || delivered != 0 {
+	if rows, _ := r.Body["submissions"].([]any); len(rows) != 0 || hooked != 1 || delivered != 0 {
 		t.Fatalf("kept %s, hooked %d, delivered %d", r.Raw, hooked, delivered)
 	}
 	// Neither email on: nothing to test.

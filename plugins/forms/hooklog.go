@@ -201,7 +201,7 @@ func (c *call) showHookCall() *plugin.Response {
 		answer = append(answer, map[string]any{"label": "Refused: " + k, "value": strings.Join(hc.Errors[k], ", "), "tone": "danger"})
 	}
 	for _, k := range sortedKeys(hc.Values) {
-		answer = append(answer, map[string]any{"label": k + " (added)", "value": display(hc.Values[k])})
+		answer = append(answer, map[string]any{"label": k + " (added)", "value": hookValueText(hc.Values[k]), "multiline": true})
 	}
 	if len(answer) == 0 {
 		answer = append(answer, map[string]any{"label": "Answer", "value": "Nothing more than its status"})
@@ -252,12 +252,7 @@ func (c *call) testHook() *plugin.Response {
 	if err := json.Unmarshal(c.req.Body, &body); err != nil {
 		return reply(400, map[string]string{"error": "bad_request", "message": "Send {\"form\": {…}}."})
 	}
-	f := body.Form
-	if strings.HasPrefix(f.HookSecret, "***") {
-		if old, ok := c.loadForm(c.req.q("id")); ok {
-			f.HookSecret = old.HookSecret
-		}
-	}
+	f := c.withSavedSecret(body.Form)
 	errs := validateForm(&f)
 	site := c.siteInfo()
 	checkHook(&f, site, func(k, m string) { errs[k] = append(errs[k], m) })
@@ -286,7 +281,7 @@ func (c *call) testHook() *plugin.Response {
 		items = append(items, map[string]any{"label": map[string]string{"accepted": "Sent the visitor to", "refused": "Refused", "failed": "Error"}[hc.Outcome], "value": s})
 	}
 	for _, k := range sortedKeys(hc.Values) {
-		items = append(items, map[string]any{"label": k + " (added)", "value": display(hc.Values[k])})
+		items = append(items, map[string]any{"label": k + " (added)", "value": hookValueText(hc.Values[k])})
 	}
 	if len(hc.Steps) > 0 {
 		items = append(items, stepItems(hc.Steps)...)
@@ -305,4 +300,60 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// withSavedSecret is f as the editor has it, with its saved hook secret
+// when the editor's is the mask it was shown.
+func (c *call) withSavedSecret(f Form) Form {
+	if strings.HasPrefix(f.HookSecret, "***") {
+		if old, ok := c.loadForm(c.req.q("id")); ok {
+			f.HookSecret = old.HookSecret
+		}
+	}
+	return f
+}
+
+// hookTags are the values a form's hook has added lately, as merge tags
+// for its messages: learned from the latest 50 calls it accepted (tests
+// too), each with what it was last, since the CMS can't know them before
+// the hook says.
+func (c *call) hookTags(f Form) []map[string]string {
+	out := []map[string]string{}
+	if f.Slug == "" || f.HookURL == "" {
+		return out
+	}
+	keys, _ := c.kvKeys("hook:"+f.Slug+":", "", 50) // newest first
+	seen := map[string]bool{}
+	for _, k := range keys {
+		var hc HookCall
+		if !c.kvGetJSON(k, &hc) || hc.Outcome != "accepted" {
+			continue
+		}
+		for _, name := range sortedKeys(hc.Values) {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			hint := "e.g. " + truncate(strings.SplitN(hookValueText(hc.Values[name]), "\n", 2)[0], 40)
+			if _, ok := hookRows(hc.Values[name]); ok {
+				hint = "A table, from the hook"
+			}
+			out = append(out, map[string]string{"name": name, "label": name, "hint": hint})
+		}
+	}
+	return out
+}
+
+// hookValueText is a value a hook added, as text: a table's rows a line
+// each.
+func hookValueText(v any) string {
+	switch x := v.(type) {
+	case []HookRow:
+		return rowsText(x)
+	case []any:
+		if rows, ok := hookRows(x); ok {
+			return rowsText(rows)
+		}
+	}
+	return display(v)
 }

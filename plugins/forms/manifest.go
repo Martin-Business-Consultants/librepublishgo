@@ -6,7 +6,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-const version = "1.5.0"
+const version = "1.6.0"
 
 // The field types the builder offers. "input" is how the admin previews
 // one; "props" are what its inspector edits.
@@ -27,10 +27,13 @@ var palette = []map[string]any{
 	{"type": "heading", "label": "Heading", "icon": "heading", "input": "heading", "props": []string{"text"}, "layout": true},
 }
 
-var mergeHelp = "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds."
+var mergeHelp = "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds (listed beside the message once it has added them)."
 
 // The tags every message can use, after the form's own fields.
-var tagCatalog = map[string]any{"builder": "fields", "extra": []map[string]string{
+// tagCatalog is what a message's sidebar offers: the builder's fields, the
+// plugin's own, and the values the form's hook has added lately (the
+// record's hook_tags, learned from its hook log).
+var tagCatalog = map[string]any{"builder": "fields", "record": "hook_tags", "record_group": "From the hook", "extra": []map[string]string{
 	{"name": "all_fields", "label": "All answers", "hint": "Every answer, as a table"},
 	{"name": "form_name", "label": "Form name"},
 	{"name": "site_name", "label": "Site name"},
@@ -116,7 +119,7 @@ func screens() []map[string]any {
 							{"name": "testing_bcc", "label": "Bcc", "type": "string_list"},
 							{"name": "testing_client_to", "label": "Send the confirmation to", "type": "string", "help": "Where a test sends the visitor's confirmation. Blank: the first Send to address."},
 						}, "actions": []map[string]any{{"label": "Send test", "icon": "send", "post": "/form/test", "send": "record",
-							"help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. Nothing is kept, and the hook and webhooks aren't told."}}},
+							"help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. A hook is called first as a test, for the values it adds (prices, say). Nothing is kept but that call, and webhooks aren't told."}}},
 						{"title": "Test the hook", "fields": []map[string]any{}, "actions": []map[string]any{{"label": "Test hook", "icon": "bolt", "post": "/form/test_hook", "send": "record",
 							"help": "Posts sample answers to the Hook tab's address with \"test\": true (and X-CMS-Test: 1), so the site can skip what it shouldn't do for a test, and shows what it answered and the steps it reported. Nothing is kept but the call, in the hook log."}}},
 					}},

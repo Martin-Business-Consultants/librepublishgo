@@ -347,7 +347,7 @@
                       "type": "string_list"
                     },
                     {
-                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds.",
+                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds (listed beside the message once it has added them).",
                       "label": "Subject",
                       "name": "admin_subject",
                       "type": "string"
@@ -378,7 +378,9 @@
                             "label": "Submission id",
                             "name": "submission_id"
                           }
-                        ]
+                        ],
+                        "record": "hook_tags",
+                        "record_group": "From the hook"
                       },
                       "name": "admin_message",
                       "type": "rich_text"
@@ -440,7 +442,7 @@
                       "type": "select"
                     },
                     {
-                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds.",
+                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds (listed beside the message once it has added them).",
                       "label": "Subject",
                       "name": "client_subject",
                       "type": "string"
@@ -471,7 +473,9 @@
                             "label": "Submission id",
                             "name": "submission_id"
                           }
-                        ]
+                        ],
+                        "record": "hook_tags",
+                        "record_group": "From the hook"
                       },
                       "name": "client_message",
                       "type": "rich_text"
@@ -511,7 +515,7 @@
                 {
                   "actions": [
                     {
-                      "help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. Nothing is kept, and the hook and webhooks aren't told.",
+                      "help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. A hook is called first as a test, for the values it adds (prices, say). Nothing is kept but that call, and webhooks aren't told.",
                       "icon": "send",
                       "label": "Send test",
                       "post": "/form/test",
@@ -987,7 +991,7 @@
         "title_key": "summary"
       }
     ],
-    "version": "1.5.0",
+    "version": "1.6.0",
     "writes": [
       "/submit",
       "/form",

@@ -226,6 +226,7 @@ func (c *call) forAdmin(f Form) map[string]any {
 	m["hook_secret"] = mask(f.HookSecret)
 	m["admin_message"] = asHTML(f.AdminMessage, defaultAdminMessage)
 	m["client_message"] = asHTML(f.ClientMessage, defaultClientMessage)
+	m["hook_tags"] = c.hookTags(f)
 	if f.Slug != "" {
 		s := c.siteInfo()
 		base := strings.TrimRight(s.CMSURL, "/") + "/api/x/forms"

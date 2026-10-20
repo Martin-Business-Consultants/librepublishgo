@@ -13,8 +13,10 @@ import (
 // testForm sends the form's emails as they'd go out for a submission, to
 // its testing addresses only, so they can be seen without bothering the
 // people who get the real ones. It takes the form as it is in the editor,
-// saved or not; the answers are samples. Nothing is kept, the hook isn't
-// called and webhooks don't hear of it.
+// saved or not; the answers are samples. When the form has a hook, it's
+// called first as a test (Test hook's "test": true), and the values it
+// adds (prices from a quote tool, say) go in the emails. Nothing is kept
+// but that call, in the hook log, and webhooks don't hear of it.
 func (c *call) testForm() *plugin.Response {
 	var body struct {
 		Form Form `json:"form"`
@@ -22,7 +24,7 @@ func (c *call) testForm() *plugin.Response {
 	if err := json.Unmarshal(c.req.Body, &body); err != nil {
 		return reply(400, map[string]string{"error": "bad_request", "message": "Send {\"form\": {…}}."})
 	}
-	f := body.Form
+	f := c.withSavedSecret(body.Form)
 	errs := validateForm(&f)
 	if _, bad := errs["testing_to"]; len(f.TestingTo) == 0 && !bad {
 		errs["testing_to"] = append(errs["testing_to"], "needs an address to send tests to")
@@ -38,8 +40,23 @@ func (c *call) testForm() *plugin.Response {
 	t.AdminTo, t.AdminCc, t.AdminBcc = f.TestingTo, f.TestingCc, f.TestingBcc
 	t.AdminSubject = "[Test] " + strOr(f.AdminSubject, "New {{ form_name }} submission")
 	t.ClientSubject = "[Test] " + f.ClientSubject
-	sent := c.notify(t, sampleSubmission(f, client))
+	sub := sampleSubmission(f, client)
 	parts := []string{}
+	if f.HookURL != "" {
+		sub.ID = newID()
+		res := c.callHookAs(f, sub, c.siteInfo(), true)
+		c.recordHookCall(res.call)
+		switch res.call.Outcome {
+		case "accepted":
+			sub.Hook, sub.HookTables = res.values, res.tables
+			parts = append(parts, fmt.Sprintf("the hook (as a test) added %d values", len(res.values)))
+		case "refused":
+			parts = append(parts, "the hook refused the sample answers ("+hookSummary(res.call)+"), so its values aren't in")
+		default:
+			parts = append(parts, "the hook failed ("+res.call.Error+"), so its values aren't in")
+		}
+	}
+	sent := c.notify(t, sub)
 	if r, ok := sent["admin"]; ok {
 		parts = append(parts, fmt.Sprintf("the submission email %s (%s)", r, strings.Join(append(append(slices.Clone(t.AdminTo), t.AdminCc...), t.AdminBcc...), ", ")))
 	}

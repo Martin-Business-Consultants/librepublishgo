@@ -99,8 +99,52 @@ type hookResult struct {
 	redirect string
 	message  string
 	values   map[string]string
+	tables   map[string][]HookRow
 	status   string
 	call     HookCall
+}
+
+// A HookRow is one row of a table value: a price breakdown's line. Strong
+// marks a total.
+type HookRow struct {
+	Label  string `json:"label"`
+	Value  string `json:"value"`
+	Strong bool   `json:"strong,omitempty"`
+}
+
+// hookRows is v as a table value, when it's one: a list of rows, each with
+// a label (at most 50 rows, their text bounded).
+func hookRows(v any) ([]HookRow, bool) {
+	list, ok := v.([]any)
+	if !ok || len(list) == 0 {
+		return nil, false
+	}
+	rows := []HookRow{}
+	for _, x := range list {
+		m, ok := x.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		label := strings.TrimSpace(display(m["label"]))
+		if label == "" {
+			return nil, false
+		}
+		strong, _ := m["strong"].(bool)
+		rows = append(rows, HookRow{Label: truncate(label, 200), Value: truncate(strings.TrimSpace(display(m["value"])), 200), Strong: strong})
+		if len(rows) == 50 {
+			break
+		}
+	}
+	return rows, true
+}
+
+// rowsText is a table value as text: a line a row.
+func rowsText(rows []HookRow) string {
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		lines[i] = r.Label + ": " + r.Value
+	}
+	return strings.Join(lines, "\n")
 }
 
 // callHook posts a submission to the form's hook, signed with its secret
@@ -174,7 +218,7 @@ func (c *call) callHookAs(f Form, sub Submission, site plugin.Site, test bool) h
 		return r
 	}
 
-	out := hookResult{status: "done", message: strings.TrimSpace(ans.Message), values: map[string]string{}}
+	out := hookResult{status: "done", message: strings.TrimSpace(ans.Message), values: map[string]string{}, tables: map[string][]HookRow{}}
 	if ans.Redirect != "" {
 		if to, ok := hookRedirect(ans.Redirect, site); ok {
 			out.redirect = to
@@ -183,15 +227,23 @@ func (c *call) callHookAs(f Form, sub Submission, site plugin.Site, test bool) h
 		}
 	}
 	for k, v := range ans.Values {
-		if nameFormat.MatchString(k) && v != nil {
-			out.values[k] = truncate(display(v), 2000)
+		if !nameFormat.MatchString(k) || v == nil {
+			continue
 		}
+		if rows, ok := hookRows(v); ok {
+			out.tables[k], out.values[k] = rows, rowsText(rows)
+			continue
+		}
+		out.values[k] = truncate(display(v), 2000)
 	}
 	hc.Outcome, hc.Redirect, hc.Message = "accepted", strOr(out.redirect, truncate(ans.Redirect, 200)), out.message
 	if len(out.values) > 0 {
 		hc.Values = map[string]any{}
 		for k, v := range out.values {
 			hc.Values[k] = v
+		}
+		for k, rows := range out.tables {
+			hc.Values[k] = rows
 		}
 	}
 	out.call = hc
