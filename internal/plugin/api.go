@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type API struct {
 	h      *Host
 	key    string
 	grants Grants
+	events []string // what it may Emit: its manifest's events
 }
 
 func (a *API) need(name string, granted bool) error {
@@ -42,6 +44,16 @@ func (a *API) Log(msg string) {
 
 // Site is the site the plugin runs on.
 func (a *API) Site(ctx context.Context) (Site, error) { return a.h.env.Site(ctx) }
+
+// Emit sends one of the plugin's events (its manifest's Events) to the
+// webhooks that take it and the plugins that hook it, in the background.
+func (a *API) Emit(ctx context.Context, event string, data any) error {
+	if !slices.Contains(a.events, event) {
+		return fmt.Errorf("%s isn't one of this plugin's events", event)
+	}
+	a.h.env.Deliver(ctx, event, data)
+	return nil
+}
 
 // Content is live content, shaped as /api/v1 shapes it (content:read).
 func (a *API) Content(ctx context.Context, q ContentQuery) (any, error) {
@@ -181,21 +193,45 @@ func (a *API) KVCount(ctx context.Context, prefix string) (int, error) {
 }
 
 // HTTP is a client that reaches only the hosts granted (http), redirects
-// included, and reads at most 4 MB of a response.
+// included, and reads at most 4 MB of a response. SiteHosts among them
+// grants the site's own origins' hosts, as they are at each request.
 func (a *API) HTTP() *http.Client {
-	return &http.Client{Timeout: callTimeout, Transport: &hostsOnly{hosts: a.grants.HTTP, next: http.DefaultTransport}}
+	t := &hostsOnly{hosts: a.grants.HTTP, next: http.DefaultTransport}
+	if slices.Contains(a.grants.HTTP, SiteHosts) && a.h != nil {
+		t.site = func(ctx context.Context) []string {
+			s, err := a.h.env.Site(ctx)
+			if err != nil {
+				return nil
+			}
+			return siteHosts(s)
+		}
+	}
+	return &http.Client{Timeout: callTimeout, Transport: t}
+}
+
+// siteHosts is the hosts of the site's public URL and allowed origins.
+func siteHosts(s Site) []string {
+	out := []string{}
+	for _, o := range append([]string{s.URL}, s.Origins...) {
+		if u, err := url.Parse(strings.TrimSpace(o)); err == nil && u.Hostname() != "" {
+			out = append(out, u.Hostname())
+		}
+	}
+	return out
 }
 
 // hostsOnly refuses requests to hosts not granted, and caps responses.
 type hostsOnly struct {
 	hosts []string
+	site  func(ctx context.Context) []string // the site's hosts, when SiteHosts is granted
 	next  http.RoundTripper
 }
 
 const maxHTTPResponse = 4 << 20
 
 func (t *hostsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
-	if !slices.Contains(t.hosts, r.URL.Hostname()) {
+	host := r.URL.Hostname()
+	if !slices.Contains(t.hosts, host) && (t.site == nil || !slices.Contains(t.site(r.Context()), host)) {
 		return nil, fmt.Errorf("http to %s wasn't granted to this plugin", r.URL.Hostname())
 	}
 	res, err := t.next.RoundTrip(r)

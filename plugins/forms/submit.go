@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -37,6 +38,9 @@ type Submission struct {
 	Referer     string            `json:"referer"`
 	SpamReason  string            `json:"spam_reason,omitempty"`
 	Mail        map[string]string `json:"mail,omitempty"`
+	// Hook is what the form's hook added, HookStatus how calling it went.
+	Hook       map[string]string `json:"hook,omitempty"`
+	HookStatus string            `json:"hook_status,omitempty"`
 }
 
 func newID() string {
@@ -187,8 +191,9 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 	}
 
 	errs := map[string][]string{}
+	shown := shownFields(f.Fields, p)
 	for _, fl := range f.Fields {
-		if fl.layout() {
+		if fl.layout() || !shown[fl.Name] {
 			continue
 		}
 		if fl.Type == "file" {
@@ -242,6 +247,21 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 		return c.answer(req, f, p.one("_return"), 422, map[string]any{"error": "invalid", "message": "Some fields need attention.", "errors": errs})
 	}
 
+	// The form's hook hears of it first: it may refuse it (the visitor sees
+	// why, and nothing is kept), and what it answers goes with it.
+	site := c.siteInfo()
+	var hook hookResult
+	if f.HookURL != "" && sub.Status != "spam" {
+		hook = c.callHook(f, sub, site)
+		if hook.refused != nil {
+			return c.answerWith(req, f, p.one("_return"), hook.refused)
+		}
+		sub.HookStatus = hook.status
+		if len(hook.values) > 0 {
+			sub.Hook = hook.values
+		}
+	}
+
 	// Kept first, then emailed: a slow mail server can't lose a submission.
 	keep := f.StoreSubmissions || sub.Status == "spam"
 	if keep {
@@ -258,8 +278,31 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 		if keep {
 			c.kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub)
 		}
+		if err := c.api.Emit(c.ctx, "submission.created", submissionEvent(f, sub)); err != nil {
+			c.logf("forms: " + err.Error())
+		}
 	}
-	return c.answer(req, f, p.one("_return"), 200, map[string]any{"ok": true, "message": f.SuccessMessage, "redirect": f.RedirectURL})
+	redirect := strOr(hook.redirect, f.RedirectURL)
+	return c.answer(req, f, p.one("_return"), 200, map[string]any{"ok": true, "message": strOr(hook.message, f.SuccessMessage), "redirect": redirect})
+}
+
+// submissionEvent is the submission.created webhook's data: the answers,
+// and what the form's hook added ({} when nothing).
+func submissionEvent(f Form, s Submission) map[string]any {
+	hook := s.Hook
+	if hook == nil {
+		hook = map[string]string{}
+	}
+	return map[string]any{"form": f.Slug, "form_name": f.Name, "submission_id": s.ID, "submitted_at": s.SubmittedAt,
+		"values": s.Values, "hook": hook}
+}
+
+// answerWith answers with a response already made, the way answer does: as
+// it is to a script, and as a redirect back to the page to a plain form.
+func (c *call) answerWith(req request, f Form, ret string, res *plugin.Response) *plugin.Response {
+	var body map[string]any
+	_ = json.Unmarshal(res.Body, &body) // ours, just made
+	return c.answer(req, f, ret, res.Status, body)
 }
 
 // answer replies to a script with JSON, and to a plain HTML form with a
@@ -275,8 +318,8 @@ func (c *call) answer(req request, f Form, ret string, status int, body map[stri
 	if back, ok := onSite(ret, s.Origins); ok {
 		to = back
 	}
-	if status == 200 && f.RedirectURL != "" {
-		to = f.RedirectURL
+	if redirect, _ := body["redirect"].(string); status == 200 && redirect != "" {
+		to = redirect
 		if strings.HasPrefix(to, "/") && s.URL != "" {
 			to = s.URL + to
 		}
@@ -418,6 +461,8 @@ func display(v any) string {
 func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
 	tags := map[string]string{"form_name": f.Name, "site_name": site.Name, "submission_id": s.ID,
 		"date": strings.Replace(s.SubmittedAt, "T", " ", 1)}
+	// What the form's hook added, under the fields' own.
+	maps.Copy(tags, s.Hook)
 	var all bytes.Buffer
 	for _, fl := range f.Fields {
 		if fl.layout() || fl.Type == "hidden" {
@@ -428,6 +473,9 @@ func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
 		}
 		v := display(s.Values[fl.Name])
 		tags[fl.Name] = v
+		if v == "" && fl.ShowIf != nil {
+			continue // a field its condition hid: not asked
+		}
 		if v == "" {
 			v = "—"
 		}
@@ -478,6 +526,9 @@ func answersTable(f Form, s Submission) string {
 			continue
 		}
 		v := display(s.Values[fl.Name])
+		if v == "" && fl.ShowIf != nil {
+			continue // a field its condition hid: not asked
+		}
 		if v == "" {
 			v = "—"
 		}

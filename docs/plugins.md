@@ -95,7 +95,13 @@ script as the CMS's origin.
 `data` the webhook payload as JSON. Events are delivered in the background,
 so a slow or failing plugin never holds up a save. The events are
 `page.published|updated|unpublished|deleted`,
-`entry.published|updated|unpublished|deleted` and `global.updated`.
+`entry.published|updated|unpublished|deleted` and `global.updated`, and the
+other plugins' events.
+
+A plugin sends events of its own with `api.Emit(ctx, event, data)`: to the
+webhooks that take them (Settings › Webhooks offers every enabled plugin's)
+and the plugins that hook them. Only the events its manifest's `Events` names
+(Forms: `submission.created`).
 
 Each call's context ends after 10 seconds, and a call that panics answers an
 error instead of taking the server down.
@@ -117,7 +123,8 @@ wasn't granted to this plugin`) and does nothing.
 | `KVAll(ctx, prefix)`, `KVCount(ctx, prefix)` | `storage` | every key under a prefix; how many |
 | `Mail(ctx, mail.Message)` | `mail` | sent through Settings › Email (from its defaults where blank); ≤ 50 recipients, ≤ 200 messages an hour |
 | `PutMedia(ctx, plugin.Media)` | `media:write` | a file (≤ 10 MB) into the media library, answered as the media API shows it; the folder defaults to `Plugins/<key>` |
-| `HTTP()` | `http` | an `*http.Client` that reaches only the granted hosts (redirects included) and reads ≤ 4 MB of a response |
+| `HTTP()` | `http` | an `*http.Client` that reaches only the granted hosts (redirects included) and reads ≤ 4 MB of a response; `@site` (`plugin.SiteHosts`) among them grants the site's own hosts, its public URL's and its allowed origins', as they are at each request |
+| `Emit(ctx, event, data)` | the event in `Events` | sends it to webhooks and plugins, in the background |
 
 Storage is the plugin's own (`plugin_kv`, keyed by its `key`). Other plugins
 can't see it, and it survives upgrades. Removing a plugin keeps its storage

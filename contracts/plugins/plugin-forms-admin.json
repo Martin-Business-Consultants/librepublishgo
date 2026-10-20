@@ -171,7 +171,8 @@
                           "props": [
                             "placeholder",
                             "default",
-                            "max_length"
+                            "max_length",
+                            "show_if"
                           ],
                           "type": "text"
                         },
@@ -180,7 +181,8 @@
                           "input": "email",
                           "label": "Email",
                           "props": [
-                            "placeholder"
+                            "placeholder",
+                            "show_if"
                           ],
                           "type": "email"
                         },
@@ -189,7 +191,8 @@
                           "input": "tel",
                           "label": "Phone",
                           "props": [
-                            "placeholder"
+                            "placeholder",
+                            "show_if"
                           ],
                           "type": "tel"
                         },
@@ -200,7 +203,8 @@
                           "props": [
                             "placeholder",
                             "rows",
-                            "max_length"
+                            "max_length",
+                            "show_if"
                           ],
                           "type": "textarea"
                         },
@@ -211,7 +215,8 @@
                           "props": [
                             "placeholder",
                             "min",
-                            "max"
+                            "max",
+                            "show_if"
                           ],
                           "type": "number"
                         },
@@ -222,7 +227,8 @@
                           "props": [
                             "options",
                             "placeholder",
-                            "default"
+                            "default",
+                            "show_if"
                           ],
                           "type": "select"
                         },
@@ -232,7 +238,8 @@
                           "label": "Choice",
                           "props": [
                             "options",
-                            "default"
+                            "default",
+                            "show_if"
                           ],
                           "type": "radio"
                         },
@@ -241,7 +248,8 @@
                           "input": "checkboxes",
                           "label": "Checkboxes",
                           "props": [
-                            "options"
+                            "options",
+                            "show_if"
                           ],
                           "type": "checkboxes"
                         },
@@ -250,7 +258,8 @@
                           "input": "checkbox",
                           "label": "Consent",
                           "props": [
-                            "text"
+                            "text",
+                            "show_if"
                           ],
                           "type": "checkbox"
                         },
@@ -258,7 +267,9 @@
                           "icon": "calendar",
                           "input": "date",
                           "label": "Date",
-                          "props": [],
+                          "props": [
+                            "show_if"
+                          ],
                           "type": "date"
                         },
                         {
@@ -266,7 +277,8 @@
                           "input": "url",
                           "label": "Website",
                           "props": [
-                            "placeholder"
+                            "placeholder",
+                            "show_if"
                           ],
                           "type": "url"
                         },
@@ -276,7 +288,8 @@
                           "label": "File upload",
                           "props": [
                             "accept",
-                            "max_mb"
+                            "max_mb",
+                            "show_if"
                           ],
                           "type": "file"
                         },
@@ -334,7 +347,7 @@
                       "type": "string_list"
                     },
                     {
-                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}.",
+                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds.",
                       "label": "Subject",
                       "name": "admin_subject",
                       "type": "string"
@@ -427,7 +440,7 @@
                       "type": "select"
                     },
                     {
-                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}.",
+                      "help": "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds.",
                       "label": "Subject",
                       "name": "client_subject",
                       "type": "string"
@@ -582,6 +595,29 @@
                 }
               ],
               "title": "Spam"
+            },
+            {
+              "id": "hook",
+              "sections": [
+                {
+                  "fields": [
+                    {
+                      "help": "Optional. An address on the site (its public URL, or an allowed origin) that's posted each submission before it's kept and emailed, signed with the secret below (X-CMS-Signature). It can refuse it (422 with errors), send the visitor to another page (redirect), and add values to it (values: usable as merge tags). If it's down or slow, the submission goes through as usual.",
+                      "label": "Hook address",
+                      "name": "hook_url",
+                      "type": "string"
+                    },
+                    {
+                      "help": "The same secret the site checks signatures with. Any long random string.",
+                      "label": "Signing secret",
+                      "name": "hook_secret",
+                      "type": "password"
+                    }
+                  ],
+                  "title": "Send each submission to the site"
+                }
+              ],
+              "title": "Hook"
             },
             {
               "id": "after",
@@ -792,7 +828,7 @@
         "title_key": "summary"
       }
     ],
-    "version": "1.1.0",
+    "version": "1.2.0",
     "writes": [
       "/submit",
       "/form",

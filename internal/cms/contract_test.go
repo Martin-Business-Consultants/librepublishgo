@@ -154,6 +154,41 @@ func TestContract(t *testing.T) {
 	}, 422)
 	submit("forms/form-submit-410.json", "newsletter", map[string]any{"email": "ada@example.test", "_hp": "", "_ts": ts}, 410)
 
+	// A form's hook: what the CMS posts it (signed with the form's
+	// hook_secret, "contract-secret" here), and what its answer does to the
+	// visitor's.
+	var hookMu sync.Mutex
+	var hookPost exchange
+	hookRecv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		dec := json.NewDecoder(r.Body)
+		dec.UseNumber()
+		_ = dec.Decode(&m)
+		hookMu.Lock()
+		hookPost = exchange{Request: map[string]any{"method": "POST", "path": "<the form's hook_url>"},
+			Headers: map[string]string{"Content-Type": r.Header.Get("Content-Type"), "X-CMS-Form": r.Header.Get("X-CMS-Form"), "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"},
+			Body:    roundTrip(m)}
+		hookMu.Unlock()
+		io.WriteString(w, `{"redirect":"/quote?q=Q-1","values":{"quote_id":"Q-1"}}`)
+	}))
+	defer hookRecv.Close()
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/general", map[string]any{"setting": map[string]any{"data": map[string]any{"cors_origins": hookRecv.URL}}}))
+	s.must(200, s.do(s.admin, "POST", "/api/x/forms/form", map[string]any{"form": map[string]any{
+		"name": "Quote", "slug": "quote", "status": "active", "store_submissions": true, "honeypot": true, "min_seconds": 3, "admin_enabled": false,
+		"success_message": "Thanks!", "hook_url": hookRecv.URL + "/hook", "hook_secret": "contract-secret",
+		"fields": []any{
+			map[string]any{"type": "email", "name": "email", "label": "Email", "required": true},
+			map[string]any{"type": "radio", "name": "service", "label": "Service", "options": []any{"Keep", "Move"}, "required": true},
+			map[string]any{"type": "text", "name": "to_zip", "label": "Destination zip", "required": true,
+				"show_if": map[string]any{"field": "service", "values": []any{"Move"}}},
+		},
+	}}))
+	submit("forms/form-submit-hook-200.json", "quote", map[string]any{"email": "ada@example.test", "service": "Move", "to_zip": "32207", "_hp": "", "_ts": ts}, 200)
+	hookMu.Lock()
+	normalizeContract(&hookPost)
+	files["forms/form-hook-request.json"] = hookPost
+	hookMu.Unlock()
+
 	// Webhooks: one of each event, schema.changed once it names the schema
 	// as it now is.
 	maps.Copy(files, hooks.samples(t, digest))
@@ -308,6 +343,8 @@ func normalizeValue(v any, key string) any {
 			return "<cursor>"
 		case key == "_ts":
 			return "1767225600000"
+		case key == "submission_id":
+			return "<submission>"
 		default:
 			return blobInURL.ReplaceAllString(x, "/files/<blob>/")
 		}
@@ -593,6 +630,8 @@ func seedContract(t *testing.T, s *site) {
 			map[string]any{"type": "number", "name": "guests", "label": "Guests", "min": 1, "max": 12},
 			map[string]any{"type": "select", "name": "topic", "label": "Topic", "options": []any{"Sales", "Support"}},
 			map[string]any{"type": "radio", "name": "contact_by", "label": "Contact me by", "options": []any{"Email", "Phone"}},
+			map[string]any{"type": "text", "name": "call_time", "label": "Best time to call", "required": true,
+				"show_if": map[string]any{"field": "contact_by", "values": []any{"Phone"}}},
 			map[string]any{"type": "checkboxes", "name": "interests", "label": "Interests", "options": []any{"News", "Events"}},
 			map[string]any{"type": "checkbox", "name": "consent", "label": "Consent", "text": "You may email me.", "required": true},
 			map[string]any{"type": "date", "name": "date", "label": "Preferred date"},

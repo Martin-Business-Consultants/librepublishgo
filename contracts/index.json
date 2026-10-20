@@ -190,6 +190,17 @@
       "Content-Type": "application/json; charset=utf-8"
     }
   },
+  "forms/form-hook-request.json": {
+    "request": {
+      "method": "POST",
+      "path": "<the form's hook_url>"
+    },
+    "headers": {
+      "Content-Type": "application/json",
+      "X-CMS-Form": "quote",
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+    }
+  },
   "forms/form-list.json": {
     "request": {
       "method": "GET",
@@ -265,6 +276,23 @@
       "path": "/api/x/forms/submit?form=contact"
     },
     "status": 422,
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  },
+  "forms/form-submit-hook-200.json": {
+    "request": {
+      "body": {
+        "_hp": "",
+        "_ts": "1767225600000",
+        "email": "ada@example.test",
+        "service": "Move",
+        "to_zip": "32207"
+      },
+      "method": "POST",
+      "path": "/api/x/forms/submit?form=quote"
+    },
+    "status": 200,
     "headers": {
       "Content-Type": "application/json; charset=utf-8"
     }
@@ -456,6 +484,17 @@
     "headers": {
       "Content-Type": "application/json",
       "X-CMS-Event": "schema.changed",
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+    }
+  },
+  "webhooks/submission.created.json": {
+    "request": {
+      "method": "POST",
+      "path": "<the webhook's URL>"
+    },
+    "headers": {
+      "Content-Type": "application/json",
+      "X-CMS-Event": "submission.created",
       "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
     }
   }

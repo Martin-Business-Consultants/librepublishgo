@@ -61,6 +61,12 @@ type Form struct {
 	RecaptchaSecret   string  `json:"recaptcha_secret"`
 	RecaptchaMinScore float64 `json:"recaptcha_min_score,omitempty"`
 
+	// HookURL, when set, is posted each submission (signed with
+	// HookSecret) before it's kept and emailed; its answer can refuse it,
+	// send the visitor elsewhere, and add values to it. See hook.go.
+	HookURL    string `json:"hook_url,omitempty"`
+	HookSecret string `json:"hook_secret,omitempty"`
+
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
@@ -84,6 +90,7 @@ type Field struct {
 	MaxLength   int      `json:"max_length,omitempty"`
 	Accept      string   `json:"accept,omitempty"`
 	MaxMB       float64  `json:"max_mb,omitempty"`
+	ShowIf      *ShowIf  `json:"show_if,omitempty"`
 }
 
 func (f Field) layout() bool { return f.Type == "heading" }
@@ -209,6 +216,7 @@ func (c *call) forAdmin(f Form) map[string]any {
 	_ = json.Unmarshal(b, &m) // a Form, just marshalled
 	m["turnstile_secret"] = mask(f.TurnstileSecret)
 	m["recaptcha_secret"] = mask(f.RecaptchaSecret)
+	m["hook_secret"] = mask(f.HookSecret)
 	m["admin_message"] = asHTML(f.AdminMessage, defaultAdminMessage)
 	m["client_message"] = asHTML(f.ClientMessage, defaultClientMessage)
 	if f.Slug != "" {
@@ -285,7 +293,12 @@ func (c *call) saveForm() *plugin.Response {
 	if strings.HasPrefix(f.RecaptchaSecret, "***") {
 		f.RecaptchaSecret = old.RecaptchaSecret
 	}
-	if errs := validateForm(&f); len(errs) > 0 {
+	if strings.HasPrefix(f.HookSecret, "***") {
+		f.HookSecret = old.HookSecret
+	}
+	errs := validateForm(&f)
+	checkHook(&f, c.siteInfo(), func(k, m string) { errs[k] = append(errs[k], m) })
+	if len(errs) > 0 {
 		return invalid(errs)
 	}
 	if f.Slug != id {
@@ -360,6 +373,7 @@ func validateForm(f *Form) map[string][]string { //nolint:gocyclo // one check a
 	if inputs == 0 {
 		add("fields", "needs at least one field")
 	}
+	checkShowIf(f.Fields, add)
 	checkList := func(k string, list []string) []string {
 		out := nonEmpty(list)
 		for _, e := range out {

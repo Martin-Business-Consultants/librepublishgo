@@ -11,9 +11,15 @@ installed and switched on. In the admin it's **Content › Forms**.
   required, width (full or half), help, placeholder, choices, limits. The
   name is what the site posts and the merge tag; a new field's name follows
   its label until you edit it.
+- **Show only when**: a field can be shown only when a field above it has
+  one of some answers (a choice, a dropdown's option, a ticked consent box):
+  "Destination zip" only when "Service" is "Move It". A field that's hidden
+  isn't asked for: it isn't required, and anything posted for it is dropped.
+  The site hides and shows it as the answers change (the definition carries
+  each field's `show_if`).
 The editor's tabs: **General** (name, slug, status, the site's URLs),
 **Editor** (the fields), **Admin Confirmation**, **User Confirmation**,
-**Spam** and **After Submission**.
+**Spam**, **Hook** and **After Submission**.
 
 - **Admin Confirmation**: who gets each submission (to, cc, bcc), the subject,
   the message, which email field replies go to, and a from name and address
@@ -27,12 +33,14 @@ The editor's tabs: **General** (name, slug, status, the site's URLs),
 - **Spam**: the honeypot (`_hp`), a minimum time between the page loading
   (`_ts`) and the post, and a captcha: none, Cloudflare Turnstile or Google
   reCAPTCHA (v2, or v3 with a lowest score), each with its own keys.
+- **Hook**: an address on the site that hears of each submission first (see
+  [The hook](#the-hook)).
 - **After Submission**: the button label, the thank-you message, or a page to
   send them to.
 
 Merge tags: `{{ <field name> }}`, `{{ all_fields }}`, `{{ form_name }}`,
-`{{ site_name }}`, `{{ submission_id }}`, `{{ date }}` (spaces inside the
-braces are optional).
+`{{ site_name }}`, `{{ submission_id }}`, `{{ date }}`, and the values the
+form's hook adds (spaces inside the braces are optional).
 
 Email needs Settings › Email (an SMTP server and a default from name and
 address); **Send test email** there checks it.
@@ -131,12 +139,61 @@ Uploaded files go into the media library under `Form uploads/<slug>`. Like
 every media file, they're served at an address that can't be guessed, but
 isn't private: don't take documents on a form that mustn't be public.
 
+## The hook
+
+A form can send each submission to the site before it's kept and emailed,
+for what only the site can do with it: create a quote in another system,
+check an answer against it, work out where the visitor goes next. Set it in
+the form's **Hook** tab: an address on the site (its public URL's origin, or
+one of Settings › General › Allowed origins: the only hosts the plugin may
+call) and a signing secret.
+
+After a submission passes the form's checks and isn't spam, the CMS posts it:
+
+```
+POST <hook_url>
+Content-Type: application/json
+X-CMS-Form: quote
+X-CMS-Signature: sha256=<hex HMAC-SHA256 of the body, keyed by the secret>
+
+{"event": "submission.created", "form": "quote", "form_name": "Quote",
+ "submission_id": "…", "submitted_at": "2026-…Z",
+ "values": {"email": "ada@example.test", "service": "Move It", "to_zip": "32207"}}
+```
+
+and waits for its answer, up to 6 seconds:
+
+- **2xx** `{"redirect": "/quote?q=Q-1", "message": "…", "values": {"quote_id": "Q-1"}}`,
+  every key optional: the visitor goes to `redirect` (a path on the site, or
+  an address on one of its origins) instead of the form's own thank-you, sees
+  `message` instead of its own, and `values` are kept with the submission
+  (shown with it, in the CSV, and as merge tags in its emails: `{{ quote_id }}`).
+- **422** `{"message": "…", "errors": {"zip": ["isn't in our service area"]}}`:
+  the visitor is refused with those errors, beside their fields, and nothing
+  is kept or sent.
+- Anything else (down, slow, another status): the submission goes through as
+  the form says, and the failure is noted on it. A hook never loses one.
+
+`contracts/forms/form-hook-request.json` pins what's posted, and
+`@librepublish/astro` checks the signature for an Astro site
+(`formHook`).
+
+## Webhooks
+
+Each submission that isn't spam is also sent to the webhooks that take
+`submission.created` (Settings › Webhooks; a new webhook doesn't, since it
+carries what people sent): `{form, form_name, submission_id, submitted_at,
+values, hook}`, in the webhook envelope (`contracts/webhooks/submission.created.json`).
+It goes out after the submission is kept, in the background, so it can't
+change what the visitor sees: that's the hook's job.
+
 ## Submissions
 
 **Forms › Submissions** lists them newest first: unread, read, spam, by
-form. Opening one marks it read and shows how its emails went. **Export CSV**
-takes the current form and status; values a spreadsheet would run as a
-formula are kept as text.
+form. Opening one marks it read and shows how its emails (and its hook) went,
+and what the hook added. **Export CSV** takes the current form and status,
+with a column for each value a hook added; values a spreadsheet would run
+as a formula are kept as text.
 
 The routes the admin uses are the plugin's own (`/api/x/forms/forms`,
 `/form`, `/submissions`, `/submission`, `/submissions.csv`, …), so the CLI

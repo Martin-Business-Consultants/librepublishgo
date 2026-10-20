@@ -6,28 +6,28 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 // The field types the builder offers. "input" is how the admin previews
 // one; "props" are what its inspector edits.
 var palette = []map[string]any{
-	{"type": "text", "label": "Text", "icon": "text", "input": "text", "props": []string{"placeholder", "default", "max_length"}},
-	{"type": "email", "label": "Email", "icon": "email", "input": "email", "props": []string{"placeholder"}},
-	{"type": "tel", "label": "Phone", "icon": "phone", "input": "tel", "props": []string{"placeholder"}},
-	{"type": "textarea", "label": "Paragraph", "icon": "paragraph", "input": "textarea", "props": []string{"placeholder", "rows", "max_length"}},
-	{"type": "number", "label": "Number", "icon": "hash", "input": "number", "props": []string{"placeholder", "min", "max"}},
-	{"type": "select", "label": "Dropdown", "icon": "dropdown", "input": "select", "props": []string{"options", "placeholder", "default"}},
-	{"type": "radio", "label": "Choice", "icon": "radio", "input": "radio", "props": []string{"options", "default"}},
-	{"type": "checkboxes", "label": "Checkboxes", "icon": "checkboxes", "input": "checkboxes", "props": []string{"options"}},
-	{"type": "checkbox", "label": "Consent", "icon": "check-square", "input": "checkbox", "props": []string{"text"}},
-	{"type": "date", "label": "Date", "icon": "calendar", "input": "date", "props": []string{}},
-	{"type": "url", "label": "Website", "icon": "link", "input": "url", "props": []string{"placeholder"}},
-	{"type": "file", "label": "File upload", "icon": "upload", "input": "file", "props": []string{"accept", "max_mb"}},
+	{"type": "text", "label": "Text", "icon": "text", "input": "text", "props": []string{"placeholder", "default", "max_length", "show_if"}},
+	{"type": "email", "label": "Email", "icon": "email", "input": "email", "props": []string{"placeholder", "show_if"}},
+	{"type": "tel", "label": "Phone", "icon": "phone", "input": "tel", "props": []string{"placeholder", "show_if"}},
+	{"type": "textarea", "label": "Paragraph", "icon": "paragraph", "input": "textarea", "props": []string{"placeholder", "rows", "max_length", "show_if"}},
+	{"type": "number", "label": "Number", "icon": "hash", "input": "number", "props": []string{"placeholder", "min", "max", "show_if"}},
+	{"type": "select", "label": "Dropdown", "icon": "dropdown", "input": "select", "props": []string{"options", "placeholder", "default", "show_if"}},
+	{"type": "radio", "label": "Choice", "icon": "radio", "input": "radio", "props": []string{"options", "default", "show_if"}},
+	{"type": "checkboxes", "label": "Checkboxes", "icon": "checkboxes", "input": "checkboxes", "props": []string{"options", "show_if"}},
+	{"type": "checkbox", "label": "Consent", "icon": "check-square", "input": "checkbox", "props": []string{"text", "show_if"}},
+	{"type": "date", "label": "Date", "icon": "calendar", "input": "date", "props": []string{"show_if"}},
+	{"type": "url", "label": "Website", "icon": "link", "input": "url", "props": []string{"placeholder", "show_if"}},
+	{"type": "file", "label": "File upload", "icon": "upload", "input": "file", "props": []string{"accept", "max_mb", "show_if"}},
 	{"type": "hidden", "label": "Hidden", "icon": "eye-off", "input": "hidden", "props": []string{"default"}},
 	{"type": "heading", "label": "Heading", "icon": "heading", "input": "heading", "props": []string{"text"}, "layout": true},
 }
 
-var mergeHelp = "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}."
+var mergeHelp = "Merge tags: {{ name of a field }}, {{ all_fields }}, {{ form_name }}, {{ site_name }}, {{ submission_id }}, {{ date }}, and the values the form's hook adds."
 
 // The tags every message can use, after the form's own fields.
 var tagCatalog = map[string]any{"builder": "fields", "extra": []map[string]string{
@@ -125,6 +125,13 @@ func screens() []map[string]any {
 							{"name": "recaptcha_min_score", "label": "Lowest score (v3)", "type": "number", "show_if": map[string]string{"captcha": "recaptcha"}, "help": "0 to 1; submissions scoring lower are refused. Blank: any that pass (v2)."},
 						}},
 					}},
+					{"id": "hook", "title": "Hook", "sections": []map[string]any{
+						{"title": "Send each submission to the site", "fields": []map[string]any{
+							{"name": "hook_url", "label": "Hook address", "type": "string",
+								"help": "Optional. An address on the site (its public URL, or an allowed origin) that's posted each submission before it's kept and emailed, signed with the secret below (X-CMS-Signature). It can refuse it (422 with errors), send the visitor to another page (redirect), and add values to it (values: usable as merge tags). If it's down or slow, the submission goes through as usual."},
+							{"name": "hook_secret", "label": "Signing secret", "type": "password", "help": "The same secret the site checks signatures with. Any long random string."},
+						}},
+					}},
 					{"id": "after", "title": "After Submission", "sections": []map[string]any{
 						{"title": "After submitting", "fields": []map[string]any{
 							{"name": "submit_label", "label": "Button label", "type": "string"},
@@ -190,7 +197,8 @@ func Module() *plugin.Module {
 			Name:        "Forms",
 			Version:     version,
 			Description: "Build forms visually, keep their submissions, and email them to you and a confirmation to the visitor.",
-			Permissions: plugin.Grants{Storage: true, Mail: true, MediaWrite: true, HTTP: []string{"challenges.cloudflare.com", "www.google.com"}},
+			Permissions: plugin.Grants{Storage: true, Mail: true, MediaWrite: true, HTTP: []string{"challenges.cloudflare.com", "www.google.com", plugin.SiteHosts}},
+			Events:      []string{"submission.created"},
 			Capabilities: []plugin.Capability{
 				{Key: read, Label: "See forms and their submissions"},
 				{Key: write, Label: "Build forms and manage submissions"},

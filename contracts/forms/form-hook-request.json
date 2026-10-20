@@ -1,0 +1,12 @@
+{
+  "event": "submission.created",
+  "form": "quote",
+  "form_name": "Quote",
+  "submission_id": "<submission>",
+  "submitted_at": "2026-01-01T00:00:00Z",
+  "values": {
+    "email": "ada@example.test",
+    "service": "Move",
+    "to_zip": "32207"
+  }
+}

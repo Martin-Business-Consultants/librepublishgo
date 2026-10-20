@@ -20,12 +20,15 @@
   import { session } from "../lib/session.svelte.js";
   import { confirm } from "../lib/confirm.svelte.js";
   import { toast, toasts, toastError } from "../lib/toast.svelte.js";
-  const EVENTS = ["page.published", "page.updated", "page.unpublished", "page.deleted", "entry.published", "entry.updated", "entry.unpublished", "entry.deleted", "global.updated", "schema.changed"];
+  // The CMS's content events; GET /webhooks adds the enabled plugins' (form
+  // submissions…), which a new webhook leaves off: they carry what people sent.
+  const CONTENT_EVENTS = ["page.published", "page.updated", "page.unpublished", "page.deleted", "entry.published", "entry.updated", "entry.unpublished", "entry.deleted", "global.updated", "schema.changed"];
+  let EVENTS = $state([...CONTENT_EVENTS]);
   let list = $state(null), editing = $state(null), open = $state(false), errors = $state({});
   let secret = $state(null), secretOpen = $state(false), deliveries = $state(null), logOpen = $state(false);
-  const load = async () => (list = (await get("/webhooks")).webhooks);
+  const load = async () => { const r = await get("/webhooks"); list = r.webhooks; if (r.events?.length) EVENTS = r.events; };
   load();
-  function edit(w) { editing = w ? { ...w, events: [...w.events] } : { name: "", url: "", events: [...EVENTS], active: true }; errors = {}; open = true; }
+  function edit(w) { editing = w ? { ...w, events: [...w.events] } : { name: "", url: "", events: [...CONTENT_EVENTS], active: true }; errors = {}; open = true; }
   async function submit() {
     const body = { webhook: { name: editing.name, url: editing.url, events: editing.events, active: editing.active } };
     const r = await save(() => (editing.id ? patch(`/webhooks/${editing.id}`, body) : post("/webhooks", body)));
@@ -62,7 +65,7 @@
           {#if session.can("webhooks:delete")}<RowAction danger onclick={() => remove(w)}>Delete</RowAction>{/if}
         </RowActions>
       </Cell>
-      <Cell muted>{w.events.length === EVENTS.length ? "Every content event" : w.events.join(", ")}</Cell>
+      <Cell muted>{CONTENT_EVENTS.every((e) => w.events.includes(e)) && w.events.length === CONTENT_EVENTS.length ? "Every content event" : w.events.length === EVENTS.length ? "Every event" : w.events.join(", ")}</Cell>
       <Cell nowrap>{#if w.last_delivery_at}<Badge tone={w.failure_count ? "danger" : "success"}>{w.failure_count ? `${w.failure_count} failing` : "OK"}</Badge> <Time value={w.last_delivery_at} class="text-xs text-muted-foreground" />{:else}<span class="text-muted-foreground">Never</span>{/if}</Cell>
       <Cell></Cell>
     {/snippet}

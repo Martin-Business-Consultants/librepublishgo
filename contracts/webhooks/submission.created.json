@@ -1,0 +1,29 @@
+{
+  "data": {
+    "form": "contact",
+    "form_name": "Contact",
+    "hook": {},
+    "submission_id": "<submission>",
+    "submitted_at": "2026-01-01T00:00:00Z",
+    "values": {
+      "consent": "yes",
+      "contact_by": "Email",
+      "date": "2026-11-01",
+      "email": "ada@example.test",
+      "guests": "4",
+      "interests": [
+        "News",
+        "Events"
+      ],
+      "message": "Hello there.",
+      "name": "Ada Lovelace",
+      "phone": "+44 (20) 7946 0000",
+      "source": "site",
+      "topic": "Sales",
+      "website": "https://ada.example"
+    }
+  },
+  "delivered_at": "2026-01-01T00:00:00Z",
+  "event": "submission.created",
+  "tenant": "acme"
+}

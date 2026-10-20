@@ -99,15 +99,18 @@ func JSON(status int, v any) *Response {
 
 // Manifest is what a plugin says it is and needs.
 type Manifest struct {
-	Key         string          `json:"key"`
-	Name        string          `json:"name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description"`
-	Permissions Grants          `json:"permissions"`
-	Hooks       []string        `json:"hooks"`
-	Routes      []Route         `json:"routes"`
-	Admin       json.RawMessage `json:"admin,omitempty"`
-	SiteConfig  json.RawMessage `json:"site_config,omitempty"`
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	Permissions Grants   `json:"permissions"`
+	Hooks       []string `json:"hooks"`
+	// Events are the webhook events the plugin sends (API.Emit), so
+	// Settings › Webhooks can offer them.
+	Events     []string        `json:"events,omitempty"`
+	Routes     []Route         `json:"routes"`
+	Admin      json.RawMessage `json:"admin,omitempty"`
+	SiteConfig json.RawMessage `json:"site_config,omitempty"`
 	// Capabilities it adds to the role editor, each "<key>:<name>", which
 	// its routes can require.
 	Capabilities []Capability `json:"capabilities"`
@@ -121,12 +124,18 @@ type Capability struct {
 
 // Grants is what a plugin asks for, and the subset a person granted.
 type Grants struct {
-	ContentRead bool     `json:"content:read"`
-	Storage     bool     `json:"storage"`
-	Mail        bool     `json:"mail"`
-	MediaWrite  bool     `json:"media:write"`
-	HTTP        []string `json:"http"`
+	ContentRead bool `json:"content:read"`
+	Storage     bool `json:"storage"`
+	Mail        bool `json:"mail"`
+	MediaWrite  bool `json:"media:write"`
+	// HTTP is the hosts the plugin may call; SiteHosts among them stands
+	// for the site's own (its public URL's and its allowed origins').
+	HTTP []string `json:"http"`
 }
+
+// SiteHosts is the Grants.HTTP entry that grants the hosts of the site's
+// own origins, whatever they are when the plugin calls.
+const SiteHosts = "@site"
 
 // MarshalJSON writes no hosts as [], never null.
 func (g Grants) MarshalJSON() ([]byte, error) {
@@ -210,6 +219,9 @@ type Env interface {
 	Content(ctx context.Context, q ContentQuery) (any, error)
 	// Audit records what someone did to a plugin.
 	Audit(ctx context.Context, actor Actor, action string, id int64, label string, meta map[string]any)
+	// Deliver sends a plugin's event to the webhooks that take it, and to
+	// the plugins that hook it.
+	Deliver(ctx context.Context, event string, data any)
 }
 
 // Site is the site a plugin runs on.

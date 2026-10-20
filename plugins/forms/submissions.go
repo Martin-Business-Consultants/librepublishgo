@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 
@@ -170,6 +171,14 @@ func (c *call) showSubmission() *plugin.Response {
 	if len(mail) == 0 {
 		mail = append(mail, map[string]any{"label": "Email", "value": "None sent"})
 	}
+	if s.HookStatus != "" {
+		details = append(details, map[string]any{"label": "Hook", "value": s.HookStatus,
+			"tone": map[bool]string{true: "success", false: "danger"}[strings.HasPrefix(s.HookStatus, "done")]})
+	}
+	hookKeys := slices.Sorted(maps.Keys(s.Hook))
+	for _, k := range hookKeys {
+		answers = append(answers, map[string]any{"label": k + " (from the hook)", "value": s.Hook[k]})
+	}
 	return reply(200, map[string]any{"submission": map[string]any{"id": s.ID, "summary": name, "status": s.Status, "form": s.Form,
 		"answers": answers, "details": details, "mail": mail}})
 }
@@ -242,25 +251,42 @@ func (c *call) exportSubmissions() *plugin.Response {
 			}
 		}
 	}
-	var buf bytes.Buffer
-	w := csv.NewWriter(&buf)
-	head := []string{"Submitted", "Form", "Status"}
-	for _, c := range cols {
-		head = append(head, strOr(c.Label, c.Name))
+	type found struct {
+		form string
+		sub  Submission
 	}
-	_ = w.Write(head) // to a buffer; Flush reports
+	var subs []found
+	hookCols := map[string]bool{}
 	for _, f := range forms {
 		for _, k := range c.kvAll("sub:" + f.Slug + ":") {
 			var s Submission
 			if !c.kvGetJSON(k, &s) || (status == "" && s.Status == "spam") || (status != "" && s.Status != status) {
 				continue
 			}
-			row := []string{s.SubmittedAt, f.Name, s.Status}
-			for _, c := range cols {
-				row = append(row, csvSafe(display(s.Values[c.Name])))
+			subs = append(subs, found{f.Name, s})
+			for k := range s.Hook {
+				hookCols[k] = true
 			}
-			_ = w.Write(row)
 		}
+	}
+	hookKeys := slices.Sorted(maps.Keys(hookCols))
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	head := []string{"Submitted", "Form", "Status"}
+	for _, c := range cols {
+		head = append(head, strOr(c.Label, c.Name))
+	}
+	head = append(head, hookKeys...)
+	_ = w.Write(head) // to a buffer; Flush reports
+	for _, x := range subs {
+		row := []string{x.sub.SubmittedAt, x.form, x.sub.Status}
+		for _, c := range cols {
+			row = append(row, csvSafe(display(x.sub.Values[c.Name])))
+		}
+		for _, k := range hookKeys {
+			row = append(row, csvSafe(x.sub.Hook[k]))
+		}
+		_ = w.Write(row)
 	}
 	w.Flush()
 	name := "submissions"

@@ -60,6 +60,13 @@ func (e pluginEnv) Audit(ctx context.Context, actor plugin.Actor, action string,
 	e.a.audit(ctx, who, action, "Plugin", id, label, meta)
 }
 
+// Deliver sends a plugin's event to the webhooks that take it and to the
+// plugins that hook it.
+func (e pluginEnv) Deliver(ctx context.Context, event string, data any) {
+	e.a.hooks.Deliver(ctx, event, data)
+	e.a.plugins.Emit(ctx, event, data)
+}
+
 // Content answers a plugin's query for live content, as the delivery API
 // shows it.
 func (e pluginEnv) Content(ctx context.Context, q plugin.ContentQuery) (any, error) {

@@ -1,7 +1,7 @@
 {
   "form": {
     "action": "https://cms.acme.example/api/x/forms/submit?form=contact",
-    "digest": "sha256:6e8067bb23572103f71eb9194248c3bc930335cb4b242be6ca5405fbf5a4913a",
+    "digest": "sha256:eb64d13fed88ff0262e00361e363179839bddd47e971d6fd1f76ebf19af18f60",
     "fields": [
       {
         "label": "",
@@ -100,6 +100,22 @@
           "required": false
         },
         "type": "radio"
+      },
+      {
+        "label": "Best time to call",
+        "name": "call_time",
+        "required": true,
+        "rules": {
+          "max_length": 500,
+          "required": true
+        },
+        "show_if": {
+          "field": "contact_by",
+          "values": [
+            "Phone"
+          ]
+        },
+        "type": "text"
       },
       {
         "label": "Interests",

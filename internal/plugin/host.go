@@ -198,7 +198,7 @@ func (h *Host) enabled(key string) (*Plugin, *API) {
 	if p == nil || !p.Enabled || p.module == nil {
 		return nil, nil
 	}
-	return p, &API{h: h, key: p.Key, grants: p.Granted}
+	return p, &API{h: h, key: p.Key, grants: p.Granted, events: p.Manifest.Events}
 }
 
 // guard runs fn within the time limit, a panic in it answering an error

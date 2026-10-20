@@ -11,6 +11,8 @@
   import Input from "../components/Input.svelte";
   import Textarea from "../components/Textarea.svelte";
   import Switch from "../components/Switch.svelte";
+  import Select from "../components/Select.svelte";
+  import Checkbox from "../components/Checkbox.svelte";
   import Field from "../components/Field.svelte";
   import DragHandle from "../components/DragHandle.svelte";
   import * as ToggleGroup from "$lib/components/ui/toggle-group/index.js";
@@ -111,6 +113,26 @@
     return () => s.destroy();
   }
   const has = (f, prop) => (kind(f.type).props || []).includes(prop);
+
+  // "Show only when": an earlier field's answer is one of some values (a
+  // consent checkbox's is "yes"). Fields above it that take an answer can
+  // control it.
+  const controlsFor = (i) => fields.slice(0, i).filter((x) => !kind(x.type).layout && x.name);
+  function setShowIf(f, field) {
+    if (!field) { delete f.show_if; return; }
+    const ctl = fields.find((x) => x.name === field);
+    const keep = f.show_if?.field === field ? f.show_if.values : [];
+    f.show_if = { field, values: ctl?.type === "checkbox" ? ["yes"] : keep };
+  }
+  function toggleShowValue(f, value, on) {
+    const values = (f.show_if.values || []).filter((v) => v !== value);
+    f.show_if = { ...f.show_if, values: on ? [...values, value] : values };
+  }
+  const showIfText = (f) => {
+    const ctl = fields.find((x) => x.name === f.show_if?.field);
+    const what = ctl?.type === "checkbox" ? "is ticked" : `is ${(f.show_if?.values || []).join(" or ") || "…"}`;
+    return `Shown when ${ctl?.label || f.show_if?.field} ${what}`;
+  };
 </script>
 
 <div class="grid gap-4 md:grid-cols-[10rem_minmax(0,1fr)] xl:grid-cols-[11rem_minmax(0,1fr)_18rem]">
@@ -168,6 +190,7 @@
               {/if}
               {#if f.help}<p class="text-muted-foreground text-xs">{f.help}</p>{/if}
             {/if}
+            {#if f.show_if?.field}<p class="text-muted-foreground flex items-center gap-1 text-xs"><Icon name="eye-off" size="xs" />{showIfText(f)}</p>{/if}
             {#if bad.length}<p class="text-destructive text-xs">{bad.join(", ")}</p>{/if}
           </div>
           <span class="text-muted-foreground absolute right-1.5 top-1.5 hidden items-center gap-0.5 group-hover:flex {selected === f.id ? '!flex' : ''}">
@@ -236,6 +259,35 @@
       {/if}
       {#if has(current, "max_mb")}
         <Field label="Largest file (MB)" help="Up to 10.">{#snippet children(id)}<Input {id} type="number" min="1" max="10" value={current.max_mb || ""} oninput={(e) => (current.max_mb = Number(e.currentTarget.value) || undefined)} placeholder="5" />{/snippet}</Field>
+      {/if}
+      {#if has(current, "show_if")}
+        {@const controls = controlsFor(i)}
+        <Field label="Show only when" help="Blank: always. A field that's hidden isn't asked for, or required." error={errorAt(i, "show_if.field")}>
+          {#snippet children(id, invalid)}
+            <Select {id} {invalid} placeholder="Always shown" options={controls.map((x) => ({ value: x.name, label: x.label || x.name }))}
+              value={current.show_if?.field ?? ""} onchange={(v) => setShowIf(current, v)} />
+          {/snippet}
+        </Field>
+        {#if current.show_if?.field}
+          {@const ctl = fields.find((x) => x.name === current.show_if.field)}
+          {#if ctl?.type === "checkbox"}
+            <p class="text-muted-foreground -mt-2 text-xs">…is ticked.</p>
+          {:else if (ctl?.options || []).length}
+            <Field label="…is one of" error={errorAt(i, "show_if.values")}>
+              {#snippet children()}
+                <div class="flex flex-col gap-1.5">
+                  {#each ctl.options.filter((o) => o.trim()) as o}
+                    <Checkbox label={o} checked={(current.show_if.values || []).includes(o)} onchange={(on) => toggleShowValue(current, o, on)} />
+                  {/each}
+                </div>
+              {/snippet}
+            </Field>
+          {:else}
+            <Field label="…is one of" help="One answer per line." error={errorAt(i, "show_if.values")}>
+              {#snippet children(id, invalid)}<Textarea {id} {invalid} rows={2} value={(current.show_if.values || []).join("\n")} oninput={(e) => (current.show_if = { ...current.show_if, values: e.currentTarget.value.split("\n") })} />{/snippet}
+            </Field>
+          {/if}
+        {/if}
       {/if}
       {#if !k.layout && k.input !== "hidden"}
         <Field label="Help text">{#snippet children(id)}<Input {id} bind:value={() => current.help || "", (v) => (current.help = v)} />{/snippet}</Field>

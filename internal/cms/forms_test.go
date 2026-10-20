@@ -3,12 +3,18 @@ package cms
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"maps"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -332,4 +338,167 @@ func TestFormsPlugin(t *testing.T) {
 	s.must(204, s.do(s.admin, "DELETE", "/api/plugins/forms", nil))
 	s.app.plugins.EnsureDefaults(t.Context())
 	s.must(404, s.do(s.admin, "GET", "/api/plugins/forms", nil))
+}
+
+// A field can be shown only when another's answer says so, and a form's
+// hook hears of each submission first: it may refuse it, send the visitor
+// on, and add values that are kept and mailed. Then webhooks hear of it.
+func TestFormsShowIfAndHook(t *testing.T) {
+	t.Parallel()
+	mailer := &captureMailer{}
+	s := newSiteWith(t, Config{Mailer: mailer})
+
+	var mu sync.Mutex
+	var hookBodies [][]byte
+	var hookSigs []string
+	hookAnswer := func(w http.ResponseWriter, values map[string]any) {
+		if values["zip"] == "00000" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			io.WriteString(w, `{"message":"We don't serve that zip yet.","errors":{"zip":["isn't in our service area"]}}`)
+			return
+		}
+		if values["zip"] == "99999" {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		io.WriteString(w, `{"redirect":"/thanks?q=Q-42","values":{"quote_id":"Q-42","bad key":"x"}}`)
+	}
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		hookBodies, hookSigs = append(hookBodies, b), append(hookSigs, r.Header.Get("X-CMS-Signature"))
+		mu.Unlock()
+		var m struct {
+			Values map[string]any `json:"values"`
+		}
+		json.Unmarshal(b, &m)
+		hookAnswer(w, m.Values)
+	}))
+	defer hook.Close()
+	var events []map[string]any
+	recv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		json.NewDecoder(r.Body).Decode(&m)
+		mu.Lock()
+		events = append(events, m)
+		mu.Unlock()
+	}))
+	defer recv.Close()
+
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/email", map[string]any{"setting": map[string]any{"data": map[string]any{
+		"smtp_host": "smtp.acme.test", "from_name": "Acme", "from_email": "hello@acme.test"}}}))
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/general", map[string]any{"setting": map[string]any{"data": map[string]any{
+		"title": "Acme", "site_base_url": "https://acme.test", "cors_origins": hook.URL}}}))
+	// Webhooks are offered the plugin's event, and one takes it.
+	r := s.must(200, s.do(s.admin, "GET", "/api/webhooks", nil))
+	if !slices.Contains(toStrings(r.Body["events"]), "submission.created") {
+		t.Fatalf("events: %s", r.Raw)
+	}
+	s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": map[string]any{"name": "crm", "url": recv.URL, "events": []any{"submission.created"}}}))
+
+	form := map[string]any{
+		"name": "Quote", "slug": "quote", "status": "active", "store_submissions": true, "min_seconds": 0,
+		"fields": []any{
+			map[string]any{"type": "radio", "name": "service", "label": "Service", "options": []any{"Keep It", "Move It"}, "required": true},
+			map[string]any{"type": "email", "name": "email", "label": "Email", "required": true},
+			map[string]any{"type": "text", "name": "zip", "label": "Zip", "required": true},
+			map[string]any{"type": "text", "name": "to_zip", "label": "Destination zip", "required": true,
+				"show_if": map[string]any{"field": "service", "values": []any{"Move It"}}},
+			map[string]any{"type": "checkbox", "name": "in_state", "label": "In state", "text": "Moving within the state",
+				"show_if": map[string]any{"field": "service", "values": []any{"Move It"}}},
+			map[string]any{"type": "text", "name": "note", "label": "Note", "show_if": map[string]any{"field": "in_state", "values": []any{"yes"}}},
+		},
+		"admin_enabled": true, "admin_to": []any{"owner@acme.test"}, "admin_subject": "Quote {{ quote_id }}",
+		"success_message": "Thanks!", "redirect_url": "/thank-you",
+		"hook_url": "https://evil.test/hook", "hook_secret": "s3cret",
+	}
+	// A condition names a field above it; a hook is on the site, with a secret.
+	bad := map[string]any{}
+	maps.Copy(bad, form)
+	bad["fields"] = []any{
+		map[string]any{"type": "text", "name": "a", "label": "A", "show_if": map[string]any{"field": "b", "values": []any{"x"}}},
+		map[string]any{"type": "text", "name": "b", "label": "B", "show_if": map[string]any{"field": "a"}},
+	}
+	r = s.must(422, s.do(s.admin, "POST", "/api/x/forms/form", map[string]any{"form": bad}))
+	if dig(r.Body, "errors", "fields[0].show_if.field", 0) == nil || dig(r.Body, "errors", "fields[1].show_if.values", 0) == nil ||
+		!strings.Contains(str(dig(r.Body, "errors", "hook_url", 0)), "on the site") {
+		t.Fatalf("validation: %s", r.Raw)
+	}
+	form["hook_url"] = hook.URL + "/hook"
+	s.must(200, s.do(s.admin, "POST", "/api/x/forms/form", map[string]any{"form": form}))
+	// The secret is masked, and saving the mask keeps it.
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/form?id=quote", nil))
+	if dig(r.Body, "form", "hook_secret") != "***cret" {
+		t.Fatalf("secret: %s", r.Raw)
+	}
+	form["hook_secret"] = "***cret"
+	s.must(200, s.do(s.admin, "POST", "/api/x/forms/form?id=quote", map[string]any{"form": form}))
+	// The site sees each field's condition.
+	r = s.must(200, s.do("", "GET", "/api/x/forms/definition?form=quote", nil))
+	if dig(r.Body, "form", "fields", 3, "show_if", "field") != "service" || dig(r.Body, "form", "fields", 4, "show_if", "values", 0) != "Move It" {
+		t.Fatalf("definition: %s", r.Raw)
+	}
+
+	// Hidden, a required field isn't asked for, and what was posted for it
+	// is dropped; shown, it's required.
+	r = s.must(422, s.do("", "POST", "/api/x/forms/submit?form=quote", map[string]any{"service": "Move It", "email": "a@x.test", "zip": "32207"}))
+	if dig(r.Body, "errors", "to_zip", 0) != "can't be blank" {
+		t.Fatalf("shown and required: %s", r.Raw)
+	}
+	r = s.must(200, s.do("", "POST", "/api/x/forms/submit?form=quote", map[string]any{
+		"service": "Keep It", "email": "a@x.test", "zip": "32207", "to_zip": "", "in_state": true, "note": "dropped"}))
+	// The hook's answer sends the visitor on, and its values go with it.
+	if r.Body["redirect"] != "/thanks?q=Q-42" || r.Body["message"] != "Thanks!" {
+		t.Fatalf("hook answer: %s", r.Raw)
+	}
+	if len(hookBodies) != 1 {
+		t.Fatalf("hook calls: %d", len(hookBodies))
+	}
+	mac := hmac.New(sha256.New, []byte("s3cret"))
+	mac.Write(hookBodies[0])
+	if hookSigs[0] != "sha256="+hex.EncodeToString(mac.Sum(nil)) {
+		t.Fatalf("signature %s", hookSigs[0])
+	}
+	var posted map[string]any
+	json.Unmarshal(hookBodies[0], &posted)
+	if dig(posted, "form") != "quote" || dig(posted, "values", "zip") != "32207" || dig(posted, "values", "note") != nil || dig(posted, "values", "in_state") != nil {
+		t.Fatalf("hook body: %s", hookBodies[0])
+	}
+	if got := mailer.take(); len(got) != 1 || !strings.Contains(got[0].raw, "Quote Q-42") {
+		t.Fatalf("mail: %+v", got)
+	}
+	s.app.hooks.Wait()
+	if len(events) != 1 || dig(events[0], "event") != "submission.created" || dig(events[0], "data", "values", "zip") != "32207" || dig(events[0], "data", "hook", "quote_id") != "Q-42" {
+		t.Fatalf("webhook: %v", events)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
+	id := str(dig(r.Body, "submissions", 0, "id"))
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submission?id="+id, nil))
+	if !strings.Contains(string(r.Raw), `"quote_id (from the hook)"`) || !strings.Contains(string(r.Raw), `"value":"done"`) {
+		t.Fatalf("submission: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions.csv?form=quote", nil))
+	if !strings.Contains(string(r.Raw), ",quote_id") || !strings.Contains(string(r.Raw), ",Q-42") {
+		t.Fatalf("csv: %s", r.Raw)
+	}
+
+	// A refusal reaches the visitor, per field, and nothing is kept.
+	r = s.must(422, s.do("", "POST", "/api/x/forms/submit?form=quote", map[string]any{"service": "Keep It", "email": "a@x.test", "zip": "00000"}))
+	if r.Body["message"] != "We don't serve that zip yet." || dig(r.Body, "errors", "zip", 0) != "isn't in our service area" {
+		t.Fatalf("refusal: %s", r.Raw)
+	}
+	// A hook that fails doesn't lose the submission: it goes through as
+	// the form says, noted.
+	r = s.must(200, s.do("", "POST", "/api/x/forms/submit?form=quote", map[string]any{"service": "Keep It", "email": "a@x.test", "zip": "99999"}))
+	if r.Body["redirect"] != "/thank-you" {
+		t.Fatalf("failed hook: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
+	if rows, _ := r.Body["submissions"].([]any); len(rows) != 2 {
+		t.Fatalf("kept: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submission?id="+str(dig(r.Body, "submissions", 0, "id")), nil))
+	if !strings.Contains(string(r.Raw), "failed: HTTP 502") {
+		t.Fatalf("noted: %s", r.Raw)
+	}
 }

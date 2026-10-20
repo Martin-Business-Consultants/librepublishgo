@@ -2,6 +2,7 @@ package cms
 
 import (
 	"database/sql"
+	"slices"
 	"strings"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
@@ -23,7 +24,28 @@ func (a *App) listWebhooks(c *Ctx) error {
 	for _, h := range list {
 		out = append(out, webhookJSON(h))
 	}
-	return c.JSON(200, O("webhooks", out))
+	return c.JSON(200, O("webhooks", out, "events", a.webhookEvents()))
+}
+
+// coreEvents are the events the CMS itself sends to webhooks.
+var coreEvents = []string{"page.published", "page.updated", "page.unpublished", "page.deleted",
+	"entry.published", "entry.updated", "entry.unpublished", "entry.deleted", "global.updated", schemaChangedEvent}
+
+// webhookEvents is every event a webhook can take: the CMS's own, then the
+// enabled plugins' (their manifests' events).
+func (a *App) webhookEvents() []string {
+	out := slices.Clone(coreEvents)
+	for _, p := range a.plugins.List() {
+		if !p.Enabled {
+			continue
+		}
+		for _, e := range p.Manifest.Events {
+			if !slices.Contains(out, e) {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
 }
 
 func (a *App) webhookByID(c *Ctx) (*webhook.Hook, error) {
