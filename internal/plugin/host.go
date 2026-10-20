@@ -22,7 +22,7 @@ import (
 // modules are the plugins this binary has. A module whose manifest or
 // handlers don't hold up panics: it's a bug in the build, not the site.
 func New(env Env, db *store.DB, log *slog.Logger, spawn Spawn, modules ...*Module) *Host {
-	h := &Host{env: env, db: db, log: log, spawn: spawn, modules: map[string]*Module{}}
+	h := &Host{env: env, db: db, log: log, spawn: spawn, modules: map[string]*Module{}, emits: make(chan struct{}, maxEmits)}
 	for _, m := range modules {
 		if err := m.validate(); err != nil {
 			panic(err)
@@ -49,7 +49,12 @@ type Host struct {
 	plugins map[string]*Plugin
 	caps    []CapGroup
 	mail    mailLimiter
+	// emits holds a slot for each plugin hook running (maxEmits at once).
+	emits chan struct{}
 }
+
+// maxEmits is how many plugin hooks run at once; the rest wait their turn.
+const maxEmits = 8
 
 var keyFormat = regexp.MustCompile(`^[a-z][a-z0-9_]{1,40}$`)
 
@@ -237,7 +242,8 @@ func (h *Host) Serve(ctx context.Context, key, export string, req *Request) (*Re
 }
 
 // Emit hands an event to every enabled plugin that hooks it, in the
-// background: a slow or failing plugin never holds up a save.
+// background: a slow or failing plugin never holds up a save. At most
+// maxEmits hooks run at once, so a burst of saves can't run thousands.
 func (h *Host) Emit(ctx context.Context, event string, data any) {
 	body, err := json.Marshal(data)
 	if err != nil {
@@ -249,6 +255,12 @@ func (h *Host) Emit(ctx context.Context, event string, data any) {
 			continue
 		}
 		h.spawn(ctx, "plugin hook", func(ctx context.Context) {
+			select {
+			case h.emits <- struct{}{}:
+				defer func() { <-h.emits }()
+			case <-ctx.Done():
+				return
+			}
 			p, api := h.enabled(p.Key)
 			if p == nil {
 				return

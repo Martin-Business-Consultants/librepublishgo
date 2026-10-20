@@ -164,7 +164,10 @@ After a submission passes the form's checks and isn't spam, the CMS posts it:
 POST <hook_url>
 Content-Type: application/json
 X-CMS-Form: quote
+X-CMS-Delivery: <the call's id>
+X-CMS-Timestamp: <Unix seconds>
 X-CMS-Signature: sha256=<hex HMAC-SHA256 of the body, keyed by the secret>
+X-CMS-Signature-V2: sha256=<hex HMAC-SHA256 of "<X-CMS-Timestamp>.<body>", same key>
 
 {"event": "submission.created", "form": "quote", "form_name": "Quote",
  "submission_id": "…", "submitted_at": "2026-…Z",

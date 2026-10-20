@@ -3,9 +3,6 @@ package forms
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
@@ -148,7 +146,8 @@ func rowsText(rows []HookRow) string {
 }
 
 // callHook posts a submission to the form's hook, signed with its secret
-// (X-CMS-Signature: sha256=<hex HMAC-SHA256 of the body>, as webhooks are),
+// as webhooks are (X-CMS-Signature over the body, X-CMS-Signature-V2 over
+// X-CMS-Timestamp and the body; X-CMS-Delivery is the call's id),
 // and reads its answer. A hook that's down, slow or answers something else
 // doesn't lose the submission: it's kept and emailed as usual, and the
 // failure is noted on it.
@@ -180,11 +179,9 @@ func (c *call) callHookAs(f Form, sub Submission, site plugin.Site, test bool) h
 	if err != nil {
 		return fail(0, err.Error())
 	}
-	mac := hmac.New(sha256.New, []byte(f.HookSecret))
-	mac.Write(body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-CMS-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	outbound.Sign(req.Header, f.HookSecret, body, hc.ID)
 	req.Header.Set("X-CMS-Form", f.Slug)
 	if test {
 		req.Header.Set("X-CMS-Test", "1")

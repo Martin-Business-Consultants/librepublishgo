@@ -57,6 +57,7 @@ builds every platform and publishes them with `checksums.txt`, which
 | | `SECRET_KEY` | Instead of `DATA_DIR/secret.key`: the key that seals token plaintexts and webhook secrets. |
 | | `CMS_DELIVERY_RATE_LIMIT` | Requests a minute per token on `/api/v1` (1200; `0` for none). |
 | | `TRUST_PROXY=1` | Behind Caddy, nginx or a load balancer: read the client's address from `X-Forwarded-For`. |
+| | `OUTBOUND_ALLOW_PRIVATE=1` | Let webhooks, form hooks, deploy hooks and plugins reach loopback and private networks (a site on the same box or network). Link-local and cloud metadata addresses stay out of reach. Off, they reach public addresses only (docs/webhooks.md). `HTTP(S)_PROXY` isn't used for them. |
 | | `LOG_LEVEL` | `debug`, `info` (what `serve` logs by default), `warn` or `error`. |
 | | `LOG_FORMAT` | `text` (the default) or `json`. Each request's line carries its `request_id`, which is also the `X-Request-ID` answered (a proxy's own is kept). |
 

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 	"github.com/Martin-Business-Consultants/librepublishgo/plugins/visits"
 )
@@ -166,7 +167,7 @@ func TestContract(t *testing.T) {
 		_ = dec.Decode(&m)
 		hookMu.Lock()
 		hookPost = exchange{Request: map[string]any{"method": "POST", "path": "<the form's hook_url>"},
-			Headers: map[string]string{"Content-Type": r.Header.Get("Content-Type"), "X-CMS-Form": r.Header.Get("X-CMS-Form"), "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"},
+			Headers: signedHeaders(r.Header, map[string]string{"Content-Type": r.Header.Get("Content-Type"), "X-CMS-Form": r.Header.Get("X-CMS-Form")}),
 			Body:    roundTrip(m)}
 		hookMu.Unlock()
 		io.WriteString(w, `{"redirect":"/quote?q=Q-1","values":{"quote_id":"Q-1"}}`)
@@ -406,10 +407,27 @@ func firstDifference(want, got string) string {
 
 // hookRecorder keeps every delivery a webhook listening for everything got.
 type hookRecorder struct {
-	s    *site
-	mu   sync.Mutex
-	got  []map[string]any
-	recv *httptest.Server
+	s       *site
+	mu      sync.Mutex
+	got     []map[string]any
+	headers []http.Header
+	recv    *httptest.Server
+}
+
+// signedHeaders is headers with the signature headers h carries, as the
+// contract writes them: what each is, not its value, which changes.
+func signedHeaders(h http.Header, headers map[string]string) map[string]string {
+	for k, v := range map[string]string{
+		outbound.SignatureHeader:   "sha256=<hex HMAC-SHA256 of the body>",
+		outbound.SignatureV2Header: "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+		outbound.TimestampHeader:   "<Unix seconds>",
+		outbound.DeliveryHeader:    "<delivery id>",
+	} {
+		if h.Get(k) != "" {
+			headers[k] = v
+		}
+	}
+	return headers
 }
 
 func recordWebhooks(t *testing.T, s *site) *hookRecorder {
@@ -422,7 +440,7 @@ func recordWebhooks(t *testing.T, s *site) *hookRecorder {
 		dec.UseNumber()
 		if dec.Decode(&m) == nil {
 			h.mu.Lock()
-			h.got = append(h.got, m)
+			h.got, h.headers = append(h.got, m), append(h.headers, r.Header.Clone())
 			h.mu.Unlock()
 		}
 	}))
@@ -455,12 +473,12 @@ func (h *hookRecorder) samples(t *testing.T, digest string) map[string]exchange 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	byEvent := map[string][]exchange{}
-	for _, m := range h.got {
+	for i, m := range h.got {
 		if m["event"] == schemaChangedEvent && dig(m, "data", "schema_digest") != digest {
 			continue // an intermediate one: when it went out depends on timing
 		}
 		x := exchange{Request: map[string]any{"method": "POST", "path": "<the webhook's URL>"}, Status: 0,
-			Headers: map[string]string{"Content-Type": "application/json", "X-CMS-Event": str(m["event"]), "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"},
+			Headers: signedHeaders(h.headers[i], map[string]string{"Content-Type": "application/json", "X-CMS-Event": str(m["event"])}),
 			Body:    roundTrip(m)}
 		normalizeContract(&x)
 		byEvent[str(m["event"])] = append(byEvent[str(m["event"])], x)

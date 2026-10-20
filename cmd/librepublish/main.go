@@ -235,8 +235,11 @@ func parseArgs(name string, args []string, extra func(*flag.FlagSet)) (cms.Confi
 		return cms.Config{}, nil, err
 	}
 	trust := os.Getenv("TRUST_PROXY") == "1" || os.Getenv("TRUST_PROXY") == "true"
+	// CMS_ALLOW_PRIVATE_WEBHOOKS is the Rails core's name for it.
+	on := func(k string) bool { return os.Getenv(k) == "1" || os.Getenv(k) == "true" }
+	private := on("OUTBOUND_ALLOW_PRIVATE") || on("CMS_ALLOW_PRIVATE_WEBHOOKS")
 	return cms.Config{DataDir: *data, Addr: *listen, BaseURL: base, SiteKey: os.Getenv("SITE_KEY"), SecretKey: os.Getenv("SECRET_KEY"),
-		Version: version, UpdateCheck: os.Getenv("UPDATE_CHECK") != "0" && os.Getenv("UPDATE_CHECK") != "false", DeliveryRateLimit: limit, TrustProxy: trust, Logger: logger, ImportMaxBytes: importMax}, rest, nil
+		Version: version, UpdateCheck: os.Getenv("UPDATE_CHECK") != "0" && os.Getenv("UPDATE_CHECK") != "false", DeliveryRateLimit: limit, TrustProxy: trust, Logger: logger, ImportMaxBytes: importMax, OutboundAllowPrivate: private}, rest, nil
 }
 
 // rateLimit reads CMS_DELIVERY_RATE_LIMIT: unset is the default, 0 is none

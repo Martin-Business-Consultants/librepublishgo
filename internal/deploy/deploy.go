@@ -5,9 +5,6 @@ package deploy
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -293,9 +290,7 @@ func (d *Debouncer) post(ctx context.Context, url, secret string, payload any) e
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if secret != "" {
-		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(body)
-		req.Header.Set("X-CMS-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		outbound.Sign(req.Header, secret, body, outbound.NewDeliveryID())
 	}
 	resp, err := outbound.Client.Do(req)
 	if err != nil {

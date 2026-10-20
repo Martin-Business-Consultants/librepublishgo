@@ -197,8 +197,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Form": "quote",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "forms/form-list.json": {
@@ -428,8 +431,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "entry.published",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "webhooks/entry.unpublished.json": {
@@ -439,8 +445,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "entry.unpublished",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "webhooks/global.updated.json": {
@@ -450,8 +459,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "global.updated",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "webhooks/page.published.json": {
@@ -461,8 +473,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "page.published",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "webhooks/page.updated.json": {
@@ -472,8 +487,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "page.updated",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "webhooks/schema.changed.json": {
@@ -483,8 +501,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "schema.changed",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   },
   "webhooks/submission.created.json": {
@@ -494,8 +515,11 @@
     },
     "headers": {
       "Content-Type": "application/json",
+      "X-CMS-Delivery": "<delivery id>",
       "X-CMS-Event": "submission.created",
-      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>"
+      "X-CMS-Signature": "sha256=<hex HMAC-SHA256 of the body>",
+      "X-CMS-Signature-V2": "sha256=<hex HMAC-SHA256 of \"<X-CMS-Timestamp>.<body>\">",
+      "X-CMS-Timestamp": "<Unix seconds>"
     }
   }
 }

@@ -453,3 +453,20 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   data json DEFAULT '{}' NOT NULL,
   updated_at datetime(6) NOT NULL
 );
+
+-- Webhook deliveries not yet made: one row each until it's delivered or
+-- given up on (webhook_deliveries records every attempt). A row being sent
+-- has next_attempt_at moved on, as a lease: one a crash left mid-send is
+-- tried again when it passes.
+CREATE TABLE IF NOT EXISTS webhook_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+  webhook_id integer NOT NULL,
+  delivery_id varchar NOT NULL,
+  event varchar NOT NULL,
+  event_data json,
+  attempts integer DEFAULT 0 NOT NULL,
+  next_attempt_at datetime(6) NOT NULL,
+  last_error text,
+  created_at datetime(6) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS index_webhook_outbox_on_next_attempt_at ON webhook_outbox (next_attempt_at);

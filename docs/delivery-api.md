@@ -247,7 +247,8 @@ A build reports itself to `POST /api/frontend/builds` with how it renders
 `content_cursor` it built from (docs/install.md, "Static or on demand").
 Publishing then rebuilds a static site through the deploy provider (GitHub,
 a build hook, or Cloudflare), sends an on-demand (`server`) site a signed
-purge (`X-CMS-Signature: sha256=<HMAC>`) naming what changed, and does both
+purge (`X-CMS-Signature: sha256=<HMAC>`, and `X-CMS-Signature-V2` with
+`X-CMS-Timestamp`, as webhooks are: docs/webhooks.md) naming what changed, and does both
 for a `hybrid` one (static pages rebuilt, on-demand ones purged). A report can only
 keep a site rebuilt on publish; one that switches it to purges, or moves where
 they go, waits for approval in Settings › Deploy (`POST
