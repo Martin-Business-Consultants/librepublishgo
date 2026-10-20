@@ -12,6 +12,10 @@
         {
           "label": "Submissions",
           "screen": "submissions"
+        },
+        {
+          "label": "Hook log",
+          "screen": "hook_calls"
         }
       ],
       "key": "forms",

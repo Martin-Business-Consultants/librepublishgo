@@ -542,6 +542,19 @@
                       }
                     ],
                     "title": "Send a test"
+                  },
+                  {
+                    "actions": [
+                      {
+                        "help": "Posts sample answers to the Hook tab's address with \"test\": true (and X-CMS-Test: 1), so the site can skip what it shouldn't do for a test, and shows what it answered and the steps it reported. Nothing is kept but the call, in the hook log.",
+                        "icon": "bolt",
+                        "label": "Test hook",
+                        "post": "/form/test_hook",
+                        "send": "record"
+                      }
+                    ],
+                    "fields": [],
+                    "title": "Test the hook"
                   }
                 ],
                 "title": "Testing"
@@ -792,6 +805,106 @@
           "title": "Submissions"
         },
         {
+          "id": "hook_calls",
+          "menu": "Hook log",
+          "source": "/hook_calls",
+          "table": {
+            "columns": [
+              {
+                "key": "who",
+                "label": "Submission",
+                "link": {
+                  "params": {
+                    "id": "id"
+                  },
+                  "screen": "hook_call"
+                },
+                "sub": "summary"
+              },
+              {
+                "key": "form_name",
+                "label": "Form"
+              },
+              {
+                "badge": true,
+                "key": "outcome",
+                "label": "Outcome"
+              },
+              {
+                "key": "duration",
+                "label": "Took",
+                "num": true
+              },
+              {
+                "key": "at",
+                "label": "When",
+                "time": true
+              }
+            ],
+            "cursor": {
+              "next": "next",
+              "param": "after"
+            },
+            "empty": {
+              "text": "When a form with a hook (its Hook tab) is sent, each call shows here: what it was sent, what it answered, and the steps it reported. Refusals too, though they aren't kept as submissions.",
+              "title": "No hook calls"
+            },
+            "filters": [
+              {
+                "label": "Form",
+                "options": "forms",
+                "param": "form"
+              }
+            ],
+            "key": "id",
+            "row_actions": [
+              {
+                "label": "View",
+                "params": {
+                  "id": "id"
+                },
+                "screen": "hook_call"
+              }
+            ],
+            "rows": "calls",
+            "status_links": {
+              "options": "outcomes",
+              "param": "outcome"
+            }
+          },
+          "title": "Hook log"
+        },
+        {
+          "detail": {
+            "main": [
+              {
+                "items": "steps",
+                "title": "Steps"
+              },
+              {
+                "items": "answer",
+                "title": "Answer"
+              },
+              {
+                "items": "sent",
+                "title": "Sent"
+              }
+            ],
+            "record": "call",
+            "side": [
+              {
+                "items": "details",
+                "title": "Details"
+              }
+            ]
+          },
+          "id": "hook_call",
+          "parent": "hook_calls",
+          "source": "/hook_call",
+          "title": "Hook call",
+          "title_key": "title"
+        },
+        {
           "detail": {
             "actions": [
               {
@@ -859,6 +972,10 @@
               {
                 "items": "mail",
                 "title": "Email"
+              },
+              {
+                "items": "hook",
+                "title": "Hook"
               }
             ]
           },
@@ -957,6 +1074,27 @@
       },
       {
         "capability": "forms:write",
+        "export": "test_hook",
+        "method": "POST",
+        "path": "/form/test_hook",
+        "public": false
+      },
+      {
+        "capability": "forms:read",
+        "export": "list_hook_calls",
+        "method": "GET",
+        "path": "/hook_calls",
+        "public": false
+      },
+      {
+        "capability": "forms:read",
+        "export": "show_hook_call",
+        "method": "GET",
+        "path": "/hook_call",
+        "public": false
+      },
+      {
+        "capability": "forms:write",
         "export": "delete_form",
         "method": "POST",
         "path": "/form/delete",
@@ -999,6 +1137,6 @@
       }
     ],
     "updated_at": "2026-01-01T00:00:00.000Z",
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

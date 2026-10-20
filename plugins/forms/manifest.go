@@ -6,7 +6,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-const version = "1.4.0"
+const version = "1.5.0"
 
 // The field types the builder offers. "input" is how the admin previews
 // one; "props" are what its inspector edits.
@@ -117,6 +117,8 @@ func screens() []map[string]any {
 							{"name": "testing_client_to", "label": "Send the confirmation to", "type": "string", "help": "Where a test sends the visitor's confirmation. Blank: the first Send to address."},
 						}, "actions": []map[string]any{{"label": "Send test", "icon": "send", "post": "/form/test", "send": "record",
 							"help": "Sends the emails that are on, as they are here (saved or not), with sample answers and [Test] in the subject. Nothing is kept, and the hook and webhooks aren't told."}}},
+						{"title": "Test the hook", "fields": []map[string]any{}, "actions": []map[string]any{{"label": "Test hook", "icon": "bolt", "post": "/form/test_hook", "send": "record",
+							"help": "Posts sample answers to the Hook tab's address with \"test\": true (and X-CMS-Test: 1), so the site can skip what it shouldn't do for a test, and shows what it answered and the steps it reported. Nothing is kept but the call, in the hook log."}}},
 					}},
 					{"id": "spam", "title": "Spam", "sections": []map[string]any{
 						{"title": "Spam protection", "fields": []map[string]any{
@@ -174,11 +176,37 @@ func screens() []map[string]any {
 			},
 		},
 		{
+			"id": "hook_calls", "title": "Hook log", "menu": "Hook log", "source": "/hook_calls",
+			"table": map[string]any{
+				"rows": "calls", "key": "id",
+				"status_links": map[string]any{"param": "outcome", "options": "outcomes"},
+				"filters":      []map[string]any{{"param": "form", "label": "Form", "options": "forms"}},
+				"cursor":       map[string]any{"param": "after", "next": "next"},
+				"columns": []map[string]any{
+					{"key": "who", "label": "Submission", "link": map[string]any{"screen": "hook_call", "params": map[string]string{"id": "id"}}, "sub": "summary"},
+					{"key": "form_name", "label": "Form"},
+					{"key": "outcome", "label": "Outcome", "badge": true},
+					{"key": "duration", "label": "Took", "num": true},
+					{"key": "at", "label": "When", "time": true},
+				},
+				"row_actions": []map[string]any{{"label": "View", "screen": "hook_call", "params": map[string]string{"id": "id"}}},
+				"empty":       map[string]string{"title": "No hook calls", "text": "When a form with a hook (its Hook tab) is sent, each call shows here: what it was sent, what it answered, and the steps it reported. Refusals too, though they aren't kept as submissions."},
+			},
+		},
+		{
+			"id": "hook_call", "title": "Hook call", "title_key": "title", "parent": "hook_calls", "source": "/hook_call",
+			"detail": map[string]any{
+				"record": "call",
+				"main":   []map[string]any{{"title": "Steps", "items": "steps"}, {"title": "Answer", "items": "answer"}, {"title": "Sent", "items": "sent"}},
+				"side":   []map[string]any{{"title": "Details", "items": "details"}},
+			},
+		},
+		{
 			"id": "submission", "title": "Submission", "title_key": "summary", "parent": "submissions", "source": "/submission",
 			"detail": map[string]any{
 				"record": "submission",
 				"main":   []map[string]any{{"title": "Answers", "items": "answers"}},
-				"side":   []map[string]any{{"title": "Details", "items": "details"}, {"title": "Email", "items": "mail"}},
+				"side":   []map[string]any{{"title": "Details", "items": "details"}, {"title": "Email", "items": "mail"}, {"title": "Hook", "items": "hook"}},
 				"actions": []map[string]any{
 					{"label": "Mark as read", "post": "/submission/status", "params": map[string]string{"id": "id"}, "body": map[string]string{"status": "read"}, "hide_if": map[string]string{"status": "read"}},
 					{"label": "Mark as spam", "post": "/submission/status", "params": map[string]string{"id": "id"}, "body": map[string]string{"status": "spam"}, "hide_if": map[string]string{"status": "spam"}},
@@ -208,6 +236,8 @@ func Module() *plugin.Module {
 			Description: "Build forms visually, keep their submissions, and email them to you and a confirmation to the visitor.",
 			Permissions: plugin.Grants{Storage: true, Mail: true, MediaWrite: true, HTTP: []string{"challenges.cloudflare.com", "www.google.com", plugin.SiteHosts}},
 			Events:      []string{"submission.created"},
+			EventFilters: []plugin.EventFilter{{Event: "submission.created", Field: "form", Label: "Forms",
+				Source: "/forms", Rows: "forms", Value: "slug", Text: "name"}},
 			Capabilities: []plugin.Capability{
 				{Key: read, Label: "See forms and their submissions"},
 				{Key: write, Label: "Build forms and manage submissions"},
@@ -221,6 +251,9 @@ func Module() *plugin.Module {
 				needs(r("POST", "/form", "save_form"), write),
 				needs(r("POST", "/form/duplicate", "duplicate_form"), write),
 				needs(r("POST", "/form/test", "test_form"), write),
+				needs(r("POST", "/form/test_hook", "test_hook"), write),
+				needs(r("GET", "/hook_calls", "list_hook_calls"), read),
+				needs(r("GET", "/hook_call", "show_hook_call"), read),
 				needs(r("POST", "/form/delete", "delete_form"), write),
 				needs(r("GET", "/submissions", "list_submissions"), read),
 				needs(r("GET", "/submissions.csv", "export_submissions"), read),
@@ -243,6 +276,9 @@ func Module() *plugin.Module {
 			"save_form":             handle((*call).saveForm),
 			"duplicate_form":        handle((*call).duplicateForm),
 			"test_form":             handle((*call).testForm),
+			"test_hook":             handle((*call).testHook),
+			"list_hook_calls":       handle((*call).listHookCalls),
+			"show_hook_call":        handle((*call).showHookCall),
 			"delete_form":           handle((*call).deleteForm),
 			"list_submissions":      handle((*call).listSubmissions),
 			"export_submissions":    handle((*call).exportSubmissions),

@@ -193,6 +193,13 @@ Its query string (`#/plugins/<key>/<id>?id=…`) is passed to `source`.
   and `actions` (`post` actions, with `hide_if`/`show_if` on the record and
   `then` a screen to go to).
 
+A manifest's `event_filters` (`[{event, field, label, source, rows, value,
+text}]`) let Settings › Webhooks narrow one of its events by name: `field`
+is the path in the event's data, and the choices are `source`'s (a GET
+route of the plugin) `rows`, each shown as its `text` and kept as its
+`value`. Forms has `{event: "submission.created", field: "form", label:
+"Forms", source: "/forms", rows: "forms", value: "slug", text: "name"}`.
+
 Screens can carry `actions` too: `{label, screen}`, `{label, download,
 keep}` (a GET route, keeping the given query params) or `{label, post}`.
 

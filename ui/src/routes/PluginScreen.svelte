@@ -20,6 +20,7 @@
   import RowActions from "../lib/components/RowActions.svelte";
   import RowAction from "../lib/components/RowAction.svelte";
   import CopyButton from "../lib/components/CopyButton.svelte";
+  import Dialog from "../lib/components/Dialog.svelte";
   import FieldsForm from "../lib/fields/FieldsForm.svelte";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import { get, post, ApiError } from "../lib/api.js";
@@ -88,8 +89,9 @@
     }
   }
   // A section's action posts the record as it is in the editor, saved or
-  // not ({"send": "record"}): Send test. Its errors show on the fields.
-  let running = $state("");
+  // not ({"send": "record"}): Send test. Its errors show on the fields, and
+  // an answer's result ({title, items}) opens to read: Test hook's.
+  let running = $state(""), result = $state(null), resultOpen = $state(false);
   async function runSectionAction(a) {
     if (running || !canWrite(a.post)) return;
     if (a.confirm && !(await confirm({ title: a.label + "?", message: a.confirm, confirmLabel: a.label }))) return;
@@ -98,7 +100,8 @@
       const body = a.send === "record" ? { [screen.form.record]: $state.snapshot(record) } : a.body || {};
       const r = await post(route(a.post, isNew ? {} : { id: query.id }), body);
       errors = {};
-      toast(r?.message || "Done.");
+      if (r?.result) { result = r.result; resultOpen = true; }
+      else toast(r?.message || "Done.");
     } catch (e) {
       if (e instanceof ApiError && e.status === 422) { errors = e.errors || {}; toasts.show(e.body?.message && e.body.message !== "Validation failed" ? e.body.message : "Some fields need attention.", "danger"); }
       else toastError(e);
@@ -140,6 +143,11 @@
     {/each}
   </dl>
 {/snippet}
+
+<Dialog bind:open={resultOpen} title={result?.title || ""} size="lg">
+  {#if result}{@render items(result.items)}{/if}
+  {#snippet actions()}<Button variant="primary" onclick={() => (resultOpen = false)}>Done</Button>{/snippet}
+</Dialog>
 
 {#if missing}
   <EmptyState icon="package" title="This screen isn't here">The plugin may be off, or your role can't open it. <a class="text-primary hover:underline" href="#/plugins">Plugins</a></EmptyState>

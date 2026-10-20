@@ -92,6 +92,12 @@ takes only the quote form's submissions. Each is a path, as above, and the
 values it may have (any of a list's); every condition on the event must
 hold. An event without conditions is taken whole.
 
+A plugin can name the choices for one of its events, and the editor shows
+them by name: with Forms on, a webhook that takes `submission.created` has
+a **Forms** list to tick, which is the `form` condition. None ticked takes
+every form's, ones added later included. The list of webhooks says which
+forms each one is for.
+
 ## Testing
 
 **Test webhook** (`POST /api/webhooks/<id>/preview`, `{event, data}`, both

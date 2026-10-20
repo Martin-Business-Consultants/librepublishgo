@@ -107,10 +107,14 @@ type Manifest struct {
 	Hooks       []string `json:"hooks"`
 	// Events are the webhook events the plugin sends (API.Emit), so
 	// Settings › Webhooks can offer them.
-	Events     []string        `json:"events,omitempty"`
-	Routes     []Route         `json:"routes"`
-	Admin      json.RawMessage `json:"admin,omitempty"`
-	SiteConfig json.RawMessage `json:"site_config,omitempty"`
+	Events []string `json:"events,omitempty"`
+	// EventFilters are the choices a webhook can narrow one of its events
+	// to, picked by name in Settings › Webhooks: which forms a
+	// submission.created is for.
+	EventFilters []EventFilter   `json:"event_filters,omitempty"`
+	Routes       []Route         `json:"routes"`
+	Admin        json.RawMessage `json:"admin,omitempty"`
+	SiteConfig   json.RawMessage `json:"site_config,omitempty"`
 	// Capabilities it adds to the role editor, each "<key>:<name>", which
 	// its routes can require.
 	Capabilities []Capability `json:"capabilities"`
@@ -238,6 +242,20 @@ type Site struct {
 	LogoURL        string `json:"logo_url,omitempty"`
 	PrimaryColor   string `json:"primary_color,omitempty"`
 	SecondaryColor string `json:"secondary_color,omitempty"`
+}
+
+// EventFilter is one of a plugin's events a webhook can take only for some
+// values of Field (a dotted path in its data): Label names them, and the
+// choices are Source's (a GET route of the plugin) Rows, each a Value and
+// a Text to show.
+type EventFilter struct {
+	Event  string `json:"event"`
+	Field  string `json:"field"`
+	Label  string `json:"label"`
+	Source string `json:"source"`
+	Rows   string `json:"rows"`
+	Value  string `json:"value"`
+	Text   string `json:"text"`
 }
 
 // ContentQuery asks for one of: a page by path, every live page, a

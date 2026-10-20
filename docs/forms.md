@@ -184,6 +184,26 @@ and waits for its answer, up to 6 seconds:
 - Anything else (down, slow, another status): the submission goes through as
   the form says, and the failure is noted on it. A hook never loses one.
 
+Either answer can say what the hook did, for the CMS to show as it says it:
+`"steps": [{"label": "Zip check", "status": "ok", "detail": "32207 served"},
+{"label": "Quote", "status": "failed", "detail": "gofuse timed out"}]`, a
+status of `ok`, `failed`, `skipped`, `warning` or `info` (at most 50 steps).
+The CMS doesn't know what a zip check or a quote is: the site does the work,
+and reports it.
+
+**The hook log** (Forms › Hook log) keeps every call, the last 1,000 per
+form: what was sent, the outcome (accepted, refused or failed), the HTTP
+status and time, the redirect, values or errors it answered, and its steps.
+Refusals are there too, though their submissions aren't kept: they're how
+an out-of-area lead is seen at all. A kept submission shows its steps
+(Hook) and links to its call.
+
+**Test hook** (the form's Testing tab) posts sample answers to the hook as
+the form is in the editor, with `"test": true` in the body and
+`X-CMS-Test: 1`, so the site can skip what it shouldn't do for a test
+(create a real quote), and shows what came back. Only the call is kept, in
+the hook log as a test.
+
 `contracts/forms/form-hook-request.json` pins what's posted, and
 `@librepublish/astro` checks the signature for an Astro site
 (`formHook`).
@@ -202,12 +222,15 @@ its body maps the answers (`values.email`) and the hook's values
 (`hook.quote_id`) to the CRM's keys, and **Only when** `form` is the form
 keeps it to that form's submissions (docs/webhooks.md).
 
+**Which forms a webhook is for** is ticked in its editor: taking
+`submission.created` shows the **Forms** list. None ticked: every form.
+
 ## Testing
 
 A form's **Testing** tab sends its emails without bothering the people who
 get the real ones. **Send test** sends each email that's on, as the form is
-in the editor (saved or not), with sample answers (a field's default or
-first choice, the testing address in every email field) and `[Test]` before
+in the editor (saved or not), with sample answers (a field's default,
+first choice or placeholder, the testing address in every email field) and `[Test]` before
 the subject:
 
 - the submission email to `testing_to`, `testing_cc` and `testing_bcc`, in

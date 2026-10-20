@@ -483,6 +483,15 @@ func (c *call) renameForm(from, to string) {
 		c.kvSet("stat:"+to, v)
 		c.kvDelete("stat:" + from)
 	}
+	for _, k := range c.kvAll("hook:" + from + ":") {
+		var hc HookCall
+		if c.kvGetJSON(k, &hc) {
+			hc.Form = to
+			c.kvSetJSON("hook:"+to+":"+hc.ID, hc)
+			c.kvSet("hookall:"+hc.ID, to)
+		}
+		c.kvDelete(k)
+	}
 }
 
 func (c *call) duplicateForm() *plugin.Response {
@@ -513,6 +522,10 @@ func (c *call) deleteForm() *plugin.Response {
 	}
 	for _, k := range c.kvAll("sub:" + slug + ":") {
 		c.kvDelete("all:" + strings.TrimPrefix(k, "sub:"+slug+":"))
+		c.kvDelete(k)
+	}
+	for _, k := range c.kvAll("hook:" + slug + ":") {
+		c.kvDelete("hookall:" + strings.TrimPrefix(k, "hook:"+slug+":"))
 		c.kvDelete(k)
 	}
 	c.kvDelete("stat:" + slug)

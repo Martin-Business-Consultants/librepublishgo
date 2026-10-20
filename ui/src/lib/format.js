@@ -36,7 +36,7 @@ export const humanize = (s) => (s ? String(s).replace(/_/g, " ").replace(/^./, (
 const TONES = {
   success: ["published", "active", "approved", "paid", "accepted", "delivered", "succeeded", "success", "enabled", "ready", "verified", "on", "passes", "ok"],
   danger: ["failed", "rejected", "void", "overdue", "canceled", "failure", "revoked", "off", "not verified", "fails"],
-  warning: ["draft", "pending", "scheduled", "queued", "sent", "open", "yours_to_judge"],
+  warning: ["refused", "draft", "pending", "scheduled", "queued", "sent", "open", "yours_to_judge"],
   info: ["running", "in progress"],
 };
 export function tone(status) {

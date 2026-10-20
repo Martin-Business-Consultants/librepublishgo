@@ -45,7 +45,36 @@
     for (const r of rows) if (r.event && r.path.trim() && r.values.length) (out[r.event] ||= {})[r.path.trim()] = r.values;
     return out;
   }
-  const load = async () => { const r = await get("/webhooks"); list = r.webhooks; if (r.events?.length) EVENTS = r.events; };
+  // Pickers: the plugins' declared choices for their events (Forms: which
+  // forms a submission.created is for), each with its choices read from the
+  // plugin, or null when they can't be (then its values are typed).
+  let PICKERS = $state([]);
+  const load = async () => {
+    const r = await get("/webhooks");
+    list = r.webhooks;
+    if (r.events?.length) EVENTS = r.events;
+    PICKERS = await Promise.all((r.event_filters || []).map(async (p) => {
+      try { return { ...p, choices: ((await get(p.source))[p.rows] || []).map((x) => ({ value: String(x[p.value]), label: x[p.text] || x[p.value] })) }; }
+      catch { return { ...p, choices: null }; }
+    }));
+  };
+  const isPicker = (r) => PICKERS.some((p) => p.event === r.event && p.field === r.path);
+  // A picker's values on the webhook being edited, and set.
+  const picked = (p) => editing.filters.find((r) => r.event === p.event && r.path === p.field)?.values || [];
+  function pick(p, values) {
+    const rest = editing.filters.filter((r) => !(r.event === p.event && r.path === p.field));
+    editing.filters = values.length ? [...rest, { event: p.event, path: p.field, values }] : rest;
+  }
+  // A webhook's events in the list, with what its pickers narrow them to.
+  function eventsSummary(w) {
+    const base = CONTENT_EVENTS.every((e) => w.events.includes(e)) && w.events.length === CONTENT_EVENTS.length ? "Every content event" : w.events.length === EVENTS.length ? "Every event" : w.events.join(", ");
+    const only = PICKERS.map((p) => {
+      const vals = w.event_filters?.[p.event]?.[p.field];
+      if (!vals?.length || !(w.events.includes(p.event) || w.events.includes("*"))) return "";
+      return `${p.label}: ${vals.map((v) => p.choices?.find((c) => c.value === v)?.label || v).join(", ")}`;
+    }).filter(Boolean);
+    return only.length ? `${base} · ${only.join(" · ")}` : base;
+  }
   load();
   function edit(w) {
     editing = w
@@ -120,7 +149,7 @@
           {#if session.can("webhooks:delete")}<RowAction danger onclick={() => remove(w)}>Delete</RowAction>{/if}
         </RowActions>
       </Cell>
-      <Cell muted>{CONTENT_EVENTS.every((e) => w.events.includes(e)) && w.events.length === CONTENT_EVENTS.length ? "Every content event" : w.events.length === EVENTS.length ? "Every event" : w.events.join(", ")}</Cell>
+      <Cell muted>{eventsSummary(w)}</Cell>
       <Cell nowrap>{#if w.last_delivery_at}<Badge tone={w.failure_count ? "danger" : "success"}>{w.failure_count ? `${w.failure_count} failing` : "OK"}</Badge> <Time value={w.last_delivery_at} class="text-xs text-muted-foreground" />{:else}<span class="text-muted-foreground">Never</span>{/if}</Cell>
       <Cell></Cell>
     {/snippet}
@@ -143,18 +172,33 @@
       <legend class="mb-2 text-sm font-semibold text-foreground">Events</legend>
       <div class="grid gap-2 sm:grid-cols-2">{#each EVENTS as ev}<Checkbox label={ev} checked={editing.events.includes(ev)} onchange={(on) => toggle(ev, on)} />{/each}</div>
     </fieldset>
+    {#each PICKERS.filter((p) => editing.events.includes(p.event) || editing.events.includes("*")) as p (p.event + p.field)}
+      <fieldset class="flex flex-col gap-2">
+        <legend class="text-sm font-semibold text-foreground">{p.label}</legend>
+        <p class="text-xs text-muted-foreground">Which {p.label.toLowerCase()} this webhook takes <code>{p.event}</code> for. None ticked: every one{#if !picked(p).length}, including ones added later{/if}.</p>
+        {#if p.choices}
+          <div class="grid gap-2 sm:grid-cols-2">
+            {#each p.choices as c (c.value)}<Checkbox label={c.label} checked={picked(p).includes(c.value)} onchange={(on) => pick(p, on ? [...picked(p), c.value] : picked(p).filter((v) => v !== c.value))} />{/each}
+            {#each picked(p).filter((v) => !p.choices.some((c) => c.value === v)) as gone (gone)}<Checkbox label="{gone} (no longer there)" checked onchange={() => pick(p, picked(p).filter((v) => v !== gone))} />{/each}
+          </div>
+          {#if !p.choices.length}<p class="text-xs text-muted-foreground">There are none yet.</p>{/if}
+        {:else}
+          <TagInput bind:value={() => picked(p), (v) => pick(p, v)} placeholder="{p.field} values (Enter)" />
+        {/if}
+      </fieldset>
+    {/each}
     <fieldset class="flex flex-col gap-2">
       <legend class="text-sm font-semibold text-foreground">Only when</legend>
-      <p class="text-xs text-muted-foreground">Leave empty to take every one of its events. A field is a path in the event's data: <code>form</code> is a submission's form, <code>values.service_type</code> one of its answers.</p>
-      {#each editing.filters as f, i}
+      <p class="text-xs text-muted-foreground">Leave empty to take every one of its events. A field is a path in the event's data: <code>values.service_type</code> is one of a submission's answers.</p>
+      {#each editing.filters as f, i}{#if !isPicker(f)}
         <div class="grid items-start gap-2 sm:grid-cols-[11rem_9rem_minmax(0,1fr)_auto]">
           <Select bind:value={f.event} options={editing.events} placeholder="Event" aria-label="Event" />
           <Input bind:value={f.path} mono placeholder="form" aria-label="Field" />
           <TagInput bind:value={f.values} placeholder="is one of… (Enter)" />
           <Button variant="plain" iconOnly icon="trash" title="Remove" class="hover:bg-destructive/10 hover:text-destructive" onclick={() => editing.filters.splice(i, 1)} />
         </div>
-      {/each}
-      <div><Button size="sm" icon="add" onclick={() => editing.filters.push({ event: editing.events.find((e) => e === "submission.created") || editing.events[0] || "", path: "form", values: [] })}>Add a condition</Button></div>
+      {/if}{/each}
+      <div><Button size="sm" icon="add" onclick={() => editing.filters.push({ event: editing.events[0] || "", path: "", values: [] })}>Add a condition</Button></div>
     </fieldset>
     {#if editing.kind === "external"}
       <fieldset class="flex flex-col gap-2">

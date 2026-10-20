@@ -90,7 +90,7 @@ func sampleAnswer(fl Field, email string) any {
 	case "email":
 		return email
 	case "tel":
-		return "(555) 010-0100"
+		return strOr(fl.Placeholder, "(555) 010-0100")
 	case "number":
 		if fl.Min != nil {
 			return fmt.Sprint(*fl.Min)
@@ -114,5 +114,5 @@ func sampleAnswer(fl Field, email string) any {
 	case "textarea":
 		return "A sample answer for " + label + "."
 	}
-	return strOr(fl.Default, "Sample "+label)
+	return strOr(fl.Default, strOr(fl.Placeholder, "Sample "+label))
 }

@@ -20,10 +20,14 @@ func (c *call) loadSubmission(id string) (Submission, bool) {
 	return s, c.kvGetJSON("sub:"+slug+":"+id, &s)
 }
 
-// summary is how a submission is named in lists: its first name- or
-// email-like answer, else its first answer.
+// summary is how a submission is named in lists: its first and last names
+// when it has both, else its first name- or email-like answer, else its
+// first answer.
 func summary(f Form, s Submission) (string, string) {
 	var first, best, excerpt string
+	if full := strings.TrimSpace(display(s.Values["first_name"]) + " " + display(s.Values["last_name"])); display(s.Values["first_name"]) != "" && display(s.Values["last_name"]) != "" {
+		best = full
+	}
 	for _, fl := range f.Fields {
 		v := display(s.Values[fl.Name])
 		if v == "" || fl.layout() || fl.Type == "hidden" || fl.Type == "file" {
@@ -179,8 +183,15 @@ func (c *call) showSubmission() *plugin.Response {
 	for _, k := range hookKeys {
 		answers = append(answers, map[string]any{"label": k + " (from the hook)", "value": s.Hook[k]})
 	}
+	hook := []map[string]any{}
+	if s.HookStatus != "" {
+		hook = stepItems(s.HookSteps)
+		if s.HookCall != "" {
+			hook = append(hook, map[string]any{"label": "Hook log", "value": "This call", "screen": "hook_call", "params": map[string]string{"id": s.HookCall}})
+		}
+	}
 	return reply(200, map[string]any{"submission": map[string]any{"id": s.ID, "summary": name, "status": s.Status, "form": s.Form,
-		"answers": answers, "details": details, "mail": mail}})
+		"answers": answers, "details": details, "mail": mail, "hook": hook}})
 }
 
 func (c *call) setStatus(s *Submission, status string) {

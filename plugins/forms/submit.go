@@ -41,6 +41,10 @@ type Submission struct {
 	// Hook is what the form's hook added, HookStatus how calling it went.
 	Hook       map[string]string `json:"hook,omitempty"`
 	HookStatus string            `json:"hook_status,omitempty"`
+	// HookSteps are what the hook said it did; HookCall is its call in the
+	// hook log.
+	HookSteps []HookStep `json:"hook_steps,omitempty"`
+	HookCall  string     `json:"hook_call,omitempty"`
 }
 
 func newID() string {
@@ -254,9 +258,10 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 	if f.HookURL != "" && sub.Status != "spam" {
 		hook = c.callHook(f, sub, site)
 		if hook.refused != nil {
+			c.recordHookCall(hook.call)
 			return c.answerWith(req, f, p.one("_return"), hook.refused)
 		}
-		sub.HookStatus = hook.status
+		sub.HookStatus, sub.HookSteps, sub.HookCall = hook.status, hook.call.Steps, hook.call.ID
 		if len(hook.values) > 0 {
 			sub.Hook = hook.values
 		}
@@ -264,6 +269,12 @@ func (c *call) submit() *plugin.Response { //nolint:gocyclo // the steps of a su
 
 	// Kept first, then emailed: a slow mail server can't lose a submission.
 	keep := f.StoreSubmissions || sub.Status == "spam"
+	if hook.call.ID != "" {
+		if keep {
+			hook.call.Submission = sub.ID
+		}
+		c.recordHookCall(hook.call)
+	}
 	if keep {
 		if e := c.kvSetJSON("sub:"+f.Slug+":"+sub.ID, sub); e != "" {
 			return c.answer(req, f, p.one("_return"), 503, map[string]any{"error": "storage", "message": "The submission couldn't be saved; try again."})

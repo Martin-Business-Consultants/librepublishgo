@@ -28,7 +28,23 @@ func (a *App) listWebhooks(c *Ctx) error {
 	for _, h := range list {
 		out = append(out, webhookJSON(h))
 	}
-	return c.JSON(200, O("webhooks", out, "events", a.webhookEvents()))
+	return c.JSON(200, O("webhooks", out, "events", a.webhookEvents(), "event_filters", a.webhookEventFilters()))
+}
+
+// webhookEventFilters are the enabled plugins' choices for narrowing their
+// events, their sources as /api paths: Forms' forms for submission.created.
+func (a *App) webhookEventFilters() []Obj {
+	out := []Obj{}
+	for _, p := range a.plugins.List() {
+		if !p.Enabled {
+			continue
+		}
+		for _, f := range p.Manifest.EventFilters {
+			out = append(out, O("event", f.Event, "field", f.Field, "label", f.Label, "source", "/x/"+p.Key+f.Source,
+				"rows", f.Rows, "value", f.Value, "text", f.Text))
+		}
+	}
+	return out
 }
 
 // coreEvents are the events the CMS itself sends to webhooks.

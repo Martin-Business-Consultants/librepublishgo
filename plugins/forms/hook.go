@@ -80,23 +80,27 @@ func checkShowIf(fields []Field, add func(k, m string)) {
 const hookTimeout = 6 * time.Second
 
 // hookAnswer is what a form's hook may answer: where to send the visitor,
-// a message for them, and values kept with the submission (and usable as
-// merge tags in its emails). Or, with 422, why the submission is refused.
+// a message for them, values kept with the submission (and usable as merge
+// tags in its emails), and the steps it took, for the hook log. Or, with
+// 422, why the submission is refused.
 type hookAnswer struct {
 	Redirect string              `json:"redirect"`
 	Message  string              `json:"message"`
 	Values   map[string]any      `json:"values"`
 	Errors   map[string][]string `json:"errors"`
+	Steps    []HookStep          `json:"steps"`
 }
 
 // hookResult is how calling the hook went: refused (the visitor sees why),
-// or what to carry on with; status is what's noted on the submission.
+// or what to carry on with; status is what's noted on the submission, and
+// call what goes in the hook log.
 type hookResult struct {
 	refused  *plugin.Response
 	redirect string
 	message  string
 	values   map[string]string
 	status   string
+	call     HookCall
 }
 
 // callHook posts a submission to the form's hook, signed with its secret
@@ -105,15 +109,32 @@ type hookResult struct {
 // doesn't lose the submission: it's kept and emailed as usual, and the
 // failure is noted on it.
 func (c *call) callHook(f Form, sub Submission, site plugin.Site) hookResult {
-	body, _ := json.Marshal(map[string]any{
+	return c.callHookAs(f, sub, site, false)
+}
+
+// callHookAs is callHook, for a test when test is set: the post says
+// "test": true (and X-CMS-Test: 1), for the site to skip what it shouldn't
+// do for one.
+func (c *call) callHookAs(f Form, sub Submission, site plugin.Site, test bool) hookResult {
+	post := map[string]any{
 		"event": "submission.created", "form": f.Slug, "form_name": f.Name,
 		"submission_id": sub.ID, "submitted_at": sub.SubmittedAt, "values": sub.Values,
-	})
+	}
+	if test {
+		post["test"] = true
+	}
+	body, _ := json.Marshal(post)
+	hc := HookCall{ID: newID(), Form: f.Slug, At: now(), Test: test, Sent: sub.Values}
+	start := time.Now()
+	fail := func(status int, why string) hookResult {
+		hc.Outcome, hc.Status, hc.Error, hc.DurationMS = "failed", status, why, time.Since(start).Milliseconds()
+		return hookResult{status: "failed: " + why, call: hc}
+	}
 	ctx, cancel := context.WithTimeout(c.ctx, hookTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.HookURL, bytes.NewReader(body))
 	if err != nil {
-		return hookResult{status: "failed: " + err.Error()}
+		return fail(0, err.Error())
 	}
 	mac := hmac.New(sha256.New, []byte(f.HookSecret))
 	mac.Write(body)
@@ -121,15 +142,19 @@ func (c *call) callHook(f Form, sub Submission, site plugin.Site) hookResult {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-CMS-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	req.Header.Set("X-CMS-Form", f.Slug)
+	if test {
+		req.Header.Set("X-CMS-Test", "1")
+	}
 	res, err := c.api.HTTP().Do(req)
 	if err != nil {
 		c.logf("forms: hook for " + f.Slug + " failed: " + err.Error())
-		return hookResult{status: "failed: " + err.Error()}
+		return fail(0, err.Error())
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	var ans hookAnswer
 	_ = json.Unmarshal(raw, &ans) // an answer that isn't JSON says nothing more than its status
+	hc.Status, hc.DurationMS, hc.Steps = res.StatusCode, time.Since(start).Milliseconds(), cleanSteps(ans.Steps)
 
 	if res.StatusCode == http.StatusUnprocessableEntity {
 		msg := strOr(ans.Message, "Some fields need attention.")
@@ -139,11 +164,14 @@ func (c *call) callHook(f Form, sub Submission, site plugin.Site) hookResult {
 				errs[k] = v
 			}
 		}
-		return hookResult{refused: reply(422, map[string]any{"error": "invalid", "message": msg, "errors": errs})}
+		hc.Outcome, hc.Message, hc.Errors = "refused", msg, errs
+		return hookResult{refused: reply(422, map[string]any{"error": "invalid", "message": msg, "errors": errs}), call: hc}
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		c.logf(fmt.Sprintf("forms: hook for %s answered HTTP %d", f.Slug, res.StatusCode))
-		return hookResult{status: fmt.Sprintf("failed: HTTP %d", res.StatusCode)}
+		r := fail(res.StatusCode, fmt.Sprintf("HTTP %d", res.StatusCode))
+		r.call.Steps = hc.Steps
+		return r
 	}
 
 	out := hookResult{status: "done", message: strings.TrimSpace(ans.Message), values: map[string]string{}}
@@ -159,6 +187,14 @@ func (c *call) callHook(f Form, sub Submission, site plugin.Site) hookResult {
 			out.values[k] = truncate(display(v), 2000)
 		}
 	}
+	hc.Outcome, hc.Redirect, hc.Message = "accepted", strOr(out.redirect, truncate(ans.Redirect, 200)), out.message
+	if len(out.values) > 0 {
+		hc.Values = map[string]any{}
+		for k, v := range out.values {
+			hc.Values[k] = v
+		}
+	}
+	out.call = hc
 	return out
 }
 

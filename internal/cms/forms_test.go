@@ -354,14 +354,14 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	hookAnswer := func(w http.ResponseWriter, values map[string]any) {
 		if values["zip"] == "00000" {
 			w.WriteHeader(http.StatusUnprocessableEntity)
-			io.WriteString(w, `{"message":"We don't serve that zip yet.","errors":{"zip":["isn't in our service area"]}}`)
+			io.WriteString(w, `{"message":"We don't serve that zip yet.","errors":{"zip":["isn't in our service area"]},"steps":[{"label":"Zip check","status":"failed","detail":"00000 not served"}]}`)
 			return
 		}
 		if values["zip"] == "99999" {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
-		io.WriteString(w, `{"redirect":"/thanks?q=Q-42","values":{"quote_id":"Q-42","bad key":"x"}}`)
+		io.WriteString(w, `{"redirect":"/thanks?q=Q-42","values":{"quote_id":"Q-42","bad key":"x"},"steps":[{"label":"Zip check","status":"ok","detail":"32207 served"},{"label":"Quote","status":"ok","detail":"Q-42"},{"label":"","status":"ok"},{"label":"Odd","status":"weird"}]}`)
 	}
 	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -410,6 +410,12 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	r := s.must(200, s.do(s.admin, "GET", "/api/webhooks", nil))
 	if !slices.Contains(toStrings(r.Body["events"]), "submission.created") {
 		t.Fatalf("events: %s", r.Raw)
+	}
+	// It can be narrowed to some forms, picked from the plugin's list.
+	if dig(r.Body, "event_filters", 0, "event") != "submission.created" || dig(r.Body, "event_filters", 0, "field") != "form" ||
+		dig(r.Body, "event_filters", 0, "source") != "/x/forms/forms" || dig(r.Body, "event_filters", 0, "rows") != "forms" ||
+		dig(r.Body, "event_filters", 0, "value") != "slug" || dig(r.Body, "event_filters", 0, "text") != "name" {
+		t.Fatalf("event filters: %s", r.Raw)
 	}
 	s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": map[string]any{"name": "crm", "url": recv.URL, "events": []any{"submission.created"}}}))
 	stella := map[string]any{"name": "Stella", "url": crm.URL, "kind": "external", "events": []any{"submission.created"},
@@ -596,6 +602,65 @@ func TestFormsShowIfAndHook(t *testing.T) {
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submission?id="+str(dig(r.Body, "submissions", 0, "id")), nil))
 	if !strings.Contains(string(r.Raw), "failed: HTTP 502") {
 		t.Fatalf("noted: %s", r.Raw)
+	}
+
+	// The hook log has every call, newest first: the refusal too, though its
+	// submission wasn't kept, with the steps the hook reported.
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/hook_calls?form=quote", nil))
+	calls, _ := r.Body["calls"].([]any)
+	byOutcome := map[string]map[string]any{}
+	for _, c := range calls {
+		byOutcome[str(dig(c, "outcome"))] = c.(map[string]any)
+	}
+	if len(calls) != 3 || len(byOutcome) != 3 || dig(calls[2], "outcome") != "accepted" || // the first sent, the last listed
+		!strings.Contains(str(byOutcome["refused"]["summary"]), "isn't in our service area") || byOutcome["failed"]["summary"] != "HTTP 502" {
+		t.Fatalf("hook log: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/hook_calls?outcome=refused", nil))
+	if rows, _ := r.Body["calls"].([]any); len(rows) != 1 {
+		t.Fatalf("refused: %s", r.Raw)
+	}
+	accepted := str(dig(calls[2], "id"))
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/hook_call?id="+accepted, nil))
+	if dig(r.Body, "call", "steps", 0, "label") != "Zip check" || dig(r.Body, "call", "steps", 0, "value") != "OK · 32207 served" ||
+		dig(r.Body, "call", "steps", 0, "tone") != "success" || dig(r.Body, "call", "steps", 2, "label") != "Odd" || len(dig(r.Body, "call", "steps").([]any)) != 3 ||
+		!strings.Contains(string(r.Raw), `"Sent the visitor to"`) || !strings.Contains(string(r.Raw), `"screen":"submission"`) {
+		t.Fatalf("hook call: %s", r.Raw)
+	}
+	// The kept submission shows its steps and links to its call.
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submission?id="+str(dig(r.Body, "submissions", 1, "id")), nil))
+	if dig(r.Body, "submission", "hook", 1, "value") != "OK · Q-42" || dig(r.Body, "submission", "hook", 3, "params", "id") != accepted {
+		t.Fatalf("submission's hook: %s", r.Raw)
+	}
+
+	// Test hook posts sample answers marked as a test, shows what came back,
+	// and keeps only the call.
+	mu.Lock()
+	before := len(hookBodies)
+	mu.Unlock()
+	form["hook_secret"] = "***cret"
+	r = s.must(200, s.do(s.admin, "POST", "/api/x/forms/form/test_hook?id=quote", map[string]any{"form": form}))
+	if dig(r.Body, "result", "items", 0, "value") == nil || !strings.HasPrefix(str(dig(r.Body, "result", "items", 0, "value")), "accepted") {
+		t.Fatalf("test hook: %s", r.Raw)
+	}
+	mu.Lock()
+	var tested map[string]any
+	json.Unmarshal(hookBodies[before], &tested)
+	mac = hmac.New(sha256.New, []byte("s3cret"))
+	mac.Write(hookBodies[before])
+	signed := hookSigs[before] == "sha256="+hex.EncodeToString(mac.Sum(nil))
+	mu.Unlock()
+	if tested["test"] != true || !signed {
+		t.Fatalf("test post %v, signed %v", tested, signed)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/hook_calls?outcome=test", nil))
+	if rows, _ := r.Body["calls"].([]any); len(rows) != 1 {
+		t.Fatalf("test calls: %s", r.Raw)
+	}
+	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))
+	if rows, _ := r.Body["submissions"].([]any); len(rows) != 2 {
+		t.Fatalf("a test kept a submission: %s", r.Raw)
 	}
 }
 
