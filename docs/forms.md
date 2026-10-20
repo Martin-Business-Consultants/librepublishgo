@@ -42,6 +42,16 @@ Merge tags: `{{ <field name> }}`, `{{ all_fields }}`, `{{ form_name }}`,
 `{{ site_name }}`, `{{ submission_id }}`, `{{ date }}`, and the values the
 form's hook adds (spaces inside the braces are optional).
 
+`{{ date }}` is the day it came in, in words (October 20, 2026), in the
+server's time zone: set `TZ` (`TZ=America/New_York`) where the CMS runs, or
+it's UTC's. A date field's answer reads the same way in an email; what's
+kept, exported and sent to webhooks stays as it came (2026-10-20).
+
+The HTML email wears the site's brand (Settings › Brand): its logo at the top,
+linked to the site; its primary color in a band above the message and in
+the links; its secondary color for the text. Use a PNG or JPEG logo: the
+email links its 640px rendition, and most mail apps don't show SVG.
+
 Email needs Settings › Email (an SMTP server and a default from name and
 address); **Send test email** there checks it.
 

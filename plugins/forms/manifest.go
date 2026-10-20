@@ -6,7 +6,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 // The field types the builder offers. "input" is how the admin previews
 // one; "props" are what its inspector edits.

@@ -622,6 +622,8 @@ func TestFormsSendTest(t *testing.T) {
 	s.must(200, s.do(s.admin, "PATCH", "/api/settings/general", map[string]any{"setting": map[string]any{"data": map[string]any{
 		"title": "Acme", "site_base_url": "https://acme.test", "cors_origins": srv.URL}}}))
 	s.must(201, s.do(s.admin, "POST", "/api/webhooks", map[string]any{"webhook": map[string]any{"name": "all", "url": srv.URL, "events": []any{"*"}}}))
+	s.must(200, s.do(s.admin, "PATCH", "/api/settings/branding", map[string]any{"setting": map[string]any{"data": map[string]any{
+		"primary_color": "#E4002B", "secondary_color": "#1f2a44"}}}))
 	form := map[string]any{
 		"name": "Quote", "slug": "quote", "status": "active", "store_submissions": true,
 		"fields": []any{
@@ -659,6 +661,12 @@ func TestFormsSendTest(t *testing.T) {
 	}
 	if !slices.Equal(client.to, []string{"me@agency.test"}) || !strings.Contains(client.raw, "Subject: [Test] Thanks") {
 		t.Fatalf("client mail to %v:\n%s", client.to, client.raw)
+	}
+	// In the brand's colors, dated in words.
+	body, _ := io.ReadAll(quotedprintable.NewReader(strings.NewReader(admin.raw)))
+	if !strings.Contains(string(body), "border-top:4px solid #e4002b") || !strings.Contains(string(body), "color:#1f2a44") ||
+		!strings.Contains(string(body), time.Now().In(time.Local).Format("January 2, 2006")) {
+		t.Fatalf("branded body:\n%s", body)
 	}
 	s.app.hooks.Wait()
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/forms/submissions?form=quote", nil))

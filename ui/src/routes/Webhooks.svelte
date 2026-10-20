@@ -49,8 +49,8 @@
   load();
   function edit(w) {
     editing = w
-      ? { ...w, events: [...w.events], filters: filterRows(w.event_filters), body_map: (w.body_map || []).map((f) => ({ ...f })) }
-      : { name: "", url: "", kind: "internal", events: [...CONTENT_EVENTS], active: true, filters: [], body_map: [] };
+      ? { ...w, testing_url: w.testing_url || "", kind: w.kind || "internal", events: [...w.events], filters: filterRows(w.event_filters), body_map: (w.body_map || []).map((f) => ({ ...f })) }
+      : { name: "", url: "", testing_url: "", kind: "internal", events: [...CONTENT_EVENTS], active: true, filters: [], body_map: [] };
     errors = {}; open = true;
   }
   async function submit() {

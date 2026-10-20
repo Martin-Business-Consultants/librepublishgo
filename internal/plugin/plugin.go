@@ -232,6 +232,12 @@ type Site struct {
 	Locale       string   `json:"locale"`
 	ContactEmail string   `json:"contact_email"`
 	Origins      []string `json:"origins"` // the site's own, as CORS allows them
+	// The brand (Settings › Brand), for what a plugin sends out: the logo's
+	// absolute URL (a raster rendition when there is one, for email) and
+	// the colors, each "" when it isn't set.
+	LogoURL        string `json:"logo_url,omitempty"`
+	PrimaryColor   string `json:"primary_color,omitempty"`
+	SecondaryColor string `json:"secondary_color,omitempty"`
 }
 
 // ContentQuery asks for one of: a page by path, every live page, a

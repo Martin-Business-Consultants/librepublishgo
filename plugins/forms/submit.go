@@ -458,9 +458,32 @@ func display(v any) string {
 	return fmt.Sprint(v)
 }
 
+// longDate is when a submission came in as {{ date }} shows it, October
+// 20, 2026: in the server's time zone (TZ), which is UTC unless it's set.
+func longDate(submittedAt string) string {
+	t, err := time.Parse(time.RFC3339, submittedAt)
+	if err != nil {
+		return submittedAt
+	}
+	return t.In(time.Local).Format("January 2, 2006")
+}
+
+// answer is a field's answer as an email shows it: a date in words
+// (October 20, 2026), the rest as display has it. What's kept, exported
+// and sent to webhooks is the answer as it came (2026-10-20).
+func answer(fl Field, v any) string {
+	s := display(v)
+	if fl.Type == "date" {
+		if t, err := time.Parse(time.DateOnly, s); err == nil {
+			return t.Format("January 2, 2006")
+		}
+	}
+	return s
+}
+
 func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
 	tags := map[string]string{"form_name": f.Name, "site_name": site.Name, "submission_id": s.ID,
-		"date": strings.Replace(s.SubmittedAt, "T", " ", 1)}
+		"date": longDate(s.SubmittedAt)}
 	// What the form's hook added, under the fields' own.
 	maps.Copy(tags, s.Hook)
 	var all bytes.Buffer
@@ -471,7 +494,7 @@ func mergeTags(f Form, s Submission, site plugin.Site) map[string]string {
 			}
 			continue
 		}
-		v := display(s.Values[fl.Name])
+		v := answer(fl, s.Values[fl.Name])
 		tags[fl.Name] = v
 		if v == "" && fl.ShowIf != nil {
 			continue // a field its condition hid: not asked
@@ -513,9 +536,29 @@ func render(tpl string, f Form, s Submission, st plugin.Site) (text, htmlOut str
 	esc["all_fields"] = answersTable(f, s)
 	body := allFieldsPar.ReplaceAllString(tpl, esc["all_fields"])
 	body = fill(body, esc)
-	htmlOut = `<!doctype html><html><body style="margin:0;padding:24px;background:#f6f6f7"><div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e5e7;border-radius:8px;padding:24px;font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18181b">` +
-		body + `</div></body></html>`
-	return fill(htmlToText(tpl), plain), htmlOut
+	return fill(htmlToText(tpl), plain), frame(body, st)
+}
+
+// frame is a message's HTML in the email around it, in the site's brand:
+// its logo at the top (linked to the site), a band of its primary color
+// above the card, its links in that color, and its text in the secondary.
+// The colors are hex, as Settings › Brand keeps them.
+func frame(body string, st plugin.Site) string {
+	primary, text := strOr(st.PrimaryColor, "#18181b"), strOr(st.SecondaryColor, "#18181b")
+	var b strings.Builder
+	fmt.Fprintf(&b, `<!doctype html><html><head><meta charset="utf-8"><style>a{color:%s}</style></head><body style="margin:0;padding:24px;background:#f6f6f7">`, primary)
+	b.WriteString(`<div style="max-width:600px;margin:0 auto">`)
+	if st.LogoURL != "" {
+		img := fmt.Sprintf(`<img src="%s" alt="%s" style="display:inline-block;max-width:200px;max-height:64px;width:auto;height:auto;border:0">`, html.EscapeString(st.LogoURL), html.EscapeString(st.Name))
+		if st.URL != "" {
+			img = `<a href="` + html.EscapeString(st.URL) + `">` + img + `</a>`
+		}
+		b.WriteString(`<div style="text-align:center;padding:8px 0 20px">` + img + `</div>`)
+	}
+	fmt.Fprintf(&b, `<div style="background:#fff;border:1px solid #e5e5e7;border-top:4px solid %s;border-radius:8px;padding:24px;font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:%s">`, primary, text)
+	b.WriteString(body)
+	b.WriteString(`</div></div></body></html>`)
+	return b.String()
 }
 
 func answersTable(f Form, s Submission) string {
@@ -525,7 +568,7 @@ func answersTable(f Form, s Submission) string {
 		if fl.layout() || fl.Type == "hidden" {
 			continue
 		}
-		v := display(s.Values[fl.Name])
+		v := answer(fl, s.Values[fl.Name])
 		if v == "" && fl.ShowIf != nil {
 			continue // a field its condition hid: not asked
 		}

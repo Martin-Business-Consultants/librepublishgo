@@ -36,8 +36,17 @@ func (e pluginEnv) Site(ctx context.Context) (plugin.Site, error) {
 	if err != nil {
 		return plugin.Site{}, err
 	}
+	b := brandingOf(e.a.settingOr(ctx, brandingKey))
+	logo := ""
+	if as := e.a.brandingImage(ctx, b.LogoID); as != nil {
+		logo = e.a.fileURL(as, "")
+		if as.variantable() {
+			logo = e.a.fileURL(as, "w640")
+		}
+	}
 	return plugin.Site{Name: str(g["title"]), URL: strings.TrimRight(str(g["site_base_url"]), "/"), Locale: e.a.defaultLocale(), CMSURL: e.a.BaseURL(),
-		ContactEmail: strOr(str(g["email"]), strOr(str(email["reply_to"]), str(email["from_email"]))), Origins: e.a.siteOrigins(ctx)}, nil
+		ContactEmail: strOr(str(g["email"]), strOr(str(email["reply_to"]), str(email["from_email"]))), Origins: e.a.siteOrigins(ctx),
+		LogoURL: logo, PrimaryColor: b.PrimaryColor, SecondaryColor: b.SecondaryColor}, nil
 }
 
 // SendMail sends m through the site's mail settings.
