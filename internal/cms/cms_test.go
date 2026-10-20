@@ -50,6 +50,7 @@ func newSiteWith(t *testing.T, cfg Config) *site {
 	t.Helper()
 	base := cfg.BaseURL
 	cfg.DataDir, cfg.SiteKey, cfg.DeliveryRateLimit = t.TempDir(), "acme", -1
+	cfg.OutboundAllowPrivate = true // the tests' receivers are on 127.0.0.1
 	if base == "" {
 		cfg.BaseURL = "http://cms.test"
 	}

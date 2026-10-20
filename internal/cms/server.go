@@ -26,6 +26,7 @@ import (
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/apierr"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/deploy"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/jsonv"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/plugin"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/ratelimit"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/secret"
@@ -80,6 +81,10 @@ type Config struct {
 	// ImportMaxBytes is the largest backup the admin may upload to import
 	// (IMPORT_MAX_BYTES; 10 GiB when 0).
 	ImportMaxBytes int64
+	// OutboundAllowPrivate lets webhooks, deploys and plugins reach loopback
+	// and private networks (OUTBOUND_ALLOW_PRIVATE): a site on the same box
+	// or network. Link-local and metadata addresses stay out of reach.
+	OutboundAllowPrivate bool
 }
 
 const defaultDeliveryRateLimit = 1200
@@ -146,6 +151,10 @@ func NewApp(cfg Config) (*App, error) {
 	if cfg.Version == "" {
 		cfg.Version = "dev"
 	}
+	// For the process: an operator's setting, the same for every App.
+	if cfg.OutboundAllowPrivate {
+		outbound.AllowPrivate(true)
+	}
 	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "storage"), 0o750); err != nil {
 		return nil, err
 	}
@@ -205,6 +214,8 @@ func (a *App) Start(ctx context.Context) error {
 	if !a.spawn(a.ctx, "scheduler", a.scheduler) {
 		return errors.New("the app is closed")
 	}
+	// Webhook deliveries an earlier run left queued go out now.
+	a.hooks.Start(a.ctx)
 	if a.cfg.UpdateCheck {
 		a.spawn(a.ctx, "update check", a.checkForUpdates)
 	}

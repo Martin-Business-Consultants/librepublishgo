@@ -15,7 +15,11 @@ the tests in `internal/cms` hold the CMS to it.
 POST <the webhook's URL>
 Content-Type: application/json
 User-Agent: librepublish-webhooks/1
+X-CMS-Event: page.published
+X-CMS-Delivery: 9f2c4e…  (the delivery's id, the same on each retry)
+X-CMS-Timestamp: 1789640400  (Unix seconds, when this attempt was signed)
 X-CMS-Signature: sha256=<hex HMAC-SHA256 of the raw body, keyed with the webhook's secret>
+X-CMS-Signature-V2: sha256=<hex HMAC-SHA256 of "<X-CMS-Timestamp>.<raw body>", same key>
 
 {"event": "page.published",
  "tenant": "acme",
@@ -72,8 +76,8 @@ User-Agent: librepublish-webhooks/1
  "service_type": "move-it", "source": "website"}
 ```
 
-It isn't signed, and has no `X-CMS-Event`: the service doesn't know the
-CMS. Its headers (`headers` in the API) are sent with it, for one that
+It isn't signed, and has no `X-CMS-Event` (it does carry
+`X-CMS-Delivery`): the service doesn't know the CMS. Its headers (`headers` in the API) are sent with it, for one that
 wants a key. "Send a test" posts the test event through its fields, which
 a CRM takes for a real, mostly blank, lead.
 
@@ -133,9 +137,35 @@ them. Like a publish, it also rebuilds or purges the site (cache tag
 
 ## Verifying the signature
 
-Compute the HMAC-SHA256 of the raw request body with the webhook's secret and
-compare it, in constant time, with `X-CMS-Signature` (after `sha256=`). The
-CMS generates a secret for every webhook, and can rotate it. A receiver
+Check `X-CMS-Signature-V2`, which covers when the post was signed as well
+as what it says, so a post someone captured can't be replayed later:
+
+1. Read `X-CMS-Timestamp` (Unix seconds) and refuse the post when it's more
+   than **5 minutes** from your clock, either way. Each attempt is signed
+   afresh, so a retry an hour later carries a fresh timestamp.
+2. Compute the HMAC-SHA256, keyed with the webhook's secret, of the
+   timestamp, a `.`, and the raw request body, byte for byte:
+   `"<X-CMS-Timestamp>.<body>"`.
+3. Compare its hex, in constant time, with `X-CMS-Signature-V2` (after
+   `sha256=`).
+4. Drop a post whose `X-CMS-Delivery` you've already handled: a retry of a
+   delivery that reached you but whose answer didn't reach the CMS.
+
+```js
+const ts = req.headers["x-cms-timestamp"];
+if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return res.status(400).end();
+const want = "sha256=" + crypto.createHmac("sha256", secret).update(`${ts}.`).update(rawBody).digest("hex");
+const got = req.headers["x-cms-signature-v2"] ?? "";
+if (got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return res.status(401).end();
+```
+
+`X-CMS-Signature` is the original signature, over the body alone, and is
+still sent for receivers that check it: compute the HMAC-SHA256 of the raw
+body with the secret and compare it, in constant time (after `sha256=`). It
+proves who sent a post, not when, so prefer the v2 one. Form hooks
+(docs/forms.md) and on-demand purges (docs/delivery-api.md) are signed the
+same way, with the same headers. The CMS generates a secret for every
+webhook, and can rotate it. A receiver
 that issues its own secret instead can have the webhook carry it:
 
 ```ruby
@@ -156,8 +186,37 @@ receivers should see includes `PubliclyAddressable` and gives a
 
 ## Deliveries
 
-Each delivery is logged with its status, timing, any error and the body
-it sent (Deliveries › Body), and a webhook
-that keeps failing is shown as failing. A webhook's URL must not resolve to a
-private, loopback or link-local address unless the install sets
-`CMS_ALLOW_PRIVATE_WEBHOOKS=true` (docs/install.md).
+A delivery is queued (in the database, so a restart doesn't lose it) and
+sent in the background, four at a time. One that can't connect, times out,
+or is answered 408, 429 or 5xx is sent again after 30 seconds, 2, 5, 15 and
+40 minutes: six attempts over about an hour, then it's given up on. Any
+other answer (a 4xx: the receiver refused it) is final. Every attempt is
+the same delivery, with the same `X-CMS-Delivery`. One under way when the
+CMS stops is sent again when it starts.
+
+Each attempt is logged with its status, timing, any error and the body it
+sent (Deliveries › Body), and a webhook that keeps failing is shown as
+failing (`failure_count` counts the attempts that failed since the last one
+that got through).
+
+## Where a webhook may post
+
+A webhook's URL (a form hook's, a deploy hook's, a plugin's requests too)
+must reach a public address. The check is on the address actually dialed,
+so neither DNS nor a redirect gets around it:
+
+- Never: link-local (`169.254.0.0/16`, `fe80::/10`, where most clouds keep
+  their metadata service), `0.0.0.0/8`, multicast, reserved and broadcast,
+  `fd00:ec2::254` and `100.100.100.200` (AWS's and Alibaba's metadata), and
+  the IPv4-mapped, NAT64 and 6to4 forms of all of these.
+- Only when the install sets `OUTBOUND_ALLOW_PRIVATE=1` (a site on the
+  same box or network): loopback, `10/8`, `172.16/12`, `192.168/16`,
+  carrier-grade NAT `100.64/10`, IPv6 unique-local `fc00::/7`, and NAT64
+  `64:ff9b::/96`. The Rails core's `CMS_ALLOW_PRIVATE_WEBHOOKS=true` is read
+  as the same.
+
+A redirect is followed (up to 5) only on the host the URL names, and never
+from `https` to `http`: the signed body and the webhook's own headers go
+nowhere it didn't name. A receiver that has moved gets its new address
+saved instead. `HTTP_PROXY`/`HTTPS_PROXY` aren't used for these posts:
+through a proxy, the CMS could check only the proxy's address.

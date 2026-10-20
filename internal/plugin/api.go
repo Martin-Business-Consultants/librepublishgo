@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/mail"
+	"github.com/Martin-Business-Consultants/librepublishgo/internal/outbound"
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/store"
 )
 
@@ -194,9 +195,11 @@ func (a *API) KVCount(ctx context.Context, prefix string) (int, error) {
 
 // HTTP is a client that reaches only the hosts granted (http), redirects
 // included, and reads at most 4 MB of a response. SiteHosts among them
-// grants the site's own origins' hosts, as they are at each request.
+// grants the site's own origins' hosts, as they are at each request. It
+// dials as webhooks do (outbound.Transport): a granted host that resolves
+// to a private or metadata address is refused all the same.
 func (a *API) HTTP() *http.Client {
-	t := &hostsOnly{hosts: a.grants.HTTP, next: http.DefaultTransport}
+	t := &hostsOnly{hosts: a.grants.HTTP, next: outbound.Transport}
 	if slices.Contains(a.grants.HTTP, SiteHosts) && a.h != nil {
 		t.site = func(ctx context.Context) []string {
 			s, err := a.h.env.Site(ctx)

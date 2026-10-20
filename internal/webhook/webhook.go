@@ -1,14 +1,14 @@
 // Package webhook posts events to the URLs people registered, signed the
 // way the webhook contract says (X-CMS-Signature: sha256=<HMAC of the
-// body>), and records each delivery.
+// body>; X-CMS-Signature-V2 over X-CMS-Timestamp and the body), and
+// records each delivery. A delivery waits in the outbox until it gets
+// through or is given up on, so neither a receiver that's down nor a
+// restart loses it.
 package webhook
 
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Martin-Business-Consultants/librepublishgo/internal/jsonv"
@@ -37,14 +36,13 @@ type Dispatcher struct {
 	log    *slog.Logger
 	tenant string // the site's name in every delivery
 	spawn  Spawn
-	// pending is the deliveries under way, for Wait.
-	pending sync.WaitGroup
+	outbox
 }
 
 // New is a dispatcher reading webhooks from db, opening their secrets with
 // key, and delivering in the background with spawn.
 func New(db *store.DB, key *secret.Key, log *slog.Logger, tenant string, spawn Spawn) *Dispatcher {
-	return &Dispatcher{db: db, key: key, log: log, tenant: tenant, spawn: spawn}
+	return &Dispatcher{db: db, key: key, log: log, tenant: tenant, spawn: spawn, outbox: outbox{wake: make(chan struct{}, workers)}}
 }
 
 // Hook is one registered receiver.
@@ -100,32 +98,6 @@ func (h *Hook) secret(s *secret.Key) (string, bool) {
 	return h.Secret, true
 }
 
-// Deliver sends event to every active webhook that takes it (its events
-// and filters), in the background: the request that caused it can end
-// first.
-func (d *Dispatcher) Deliver(ctx context.Context, event string, data any) {
-	hooks, err := d.List(ctx, "active = 1")
-	if err != nil {
-		d.log.Warn("webhooks", "err", err)
-		return
-	}
-	for _, h := range hooks {
-		if !h.Takes(event, data) {
-			continue
-		}
-		d.pending.Add(1)
-		if !d.spawn(ctx, "webhook", func(ctx context.Context) {
-			defer d.pending.Done()
-			_, _ = d.Send(ctx, h, event, data) // the delivery's outcome is recorded
-		}) {
-			d.pending.Done()
-		}
-	}
-}
-
-// Wait is for tests: every delivery started has finished.
-func (d *Dispatcher) Wait() { d.pending.Wait() }
-
 // envelope is a delivery's body.
 type envelope struct {
 	Event       string `json:"event"`
@@ -146,6 +118,11 @@ type Outgoing struct {
 // webhook's is the envelope, signed; an external one's is the body its
 // fields build, unsigned. Its headers include h's own.
 func (d *Dispatcher) Build(h *Hook, event string, data any) (*Outgoing, error) {
+	return d.build(h, event, data, outbound.NewDeliveryID())
+}
+
+// build is Build as delivery id, the same on each attempt of one.
+func (d *Dispatcher) build(h *Hook, event string, data any, id string) (*Outgoing, error) {
 	external := h.Kind == External
 	var body []byte
 	var err error
@@ -160,15 +137,14 @@ func (d *Dispatcher) Build(h *Hook, event string, data any) (*Outgoing, error) {
 	out := &Outgoing{URL: h.URL, Header: http.Header{}, Body: body}
 	out.Header.Set("Content-Type", "application/json")
 	out.Header.Set("User-Agent", "librepublish-webhooks/1")
+	out.Header.Set(outbound.DeliveryHeader, id)
 	if !external {
 		secret, ok := h.secret(d.key)
 		if !ok {
 			return out, fmt.Errorf("the signing secret can't be read here (another install's key, or cleared by an import): rotate it")
 		}
-		mac := hmac.New(sha256.New, []byte(secret))
-		mac.Write(body)
 		out.Header.Set("X-CMS-Event", event)
-		out.Header.Set("X-CMS-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		outbound.Sign(out.Header, secret, body, id)
 	}
 	for k, v := range h.Headers.Map() {
 		out.Header.Set(k, jsonv.String(v))
@@ -176,7 +152,8 @@ func (d *Dispatcher) Build(h *Hook, event string, data any) (*Outgoing, error) {
 	return out, nil
 }
 
-// Send makes one delivery to h's URL and records it.
+// Send makes one delivery to h's URL now, and records it. Deliver is what
+// queues one, sent again until it gets through.
 func (d *Dispatcher) Send(ctx context.Context, h *Hook, event string, data any) (status int, err error) {
 	return d.send(ctx, h, event, data, h.URL, false)
 }
@@ -187,58 +164,95 @@ func (d *Dispatcher) SendTest(ctx context.Context, h *Hook, event string, data a
 	return d.send(ctx, h, event, data, url, true)
 }
 
-func (d *Dispatcher) send(ctx context.Context, h *Hook, event string, data any, url string, test bool) (status int, err error) {
-	out, berr := d.Build(h, event, data)
-	var body []byte
-	if out != nil {
-		body = out.Body
+func (d *Dispatcher) send(ctx context.Context, h *Hook, event string, data any, url string, test bool) (int, error) {
+	a := d.post(ctx, h, event, data, url, outbound.NewDeliveryID())
+	d.record(ctx, h, event, data, test, a)
+	return a.status, a.err
+}
+
+// attempt is how one post went.
+type attempt struct {
+	body   []byte
+	status int
+	took   time.Duration
+	err    error
+	// final is an error trying again won't mend: the secret can't be read,
+	// the URL isn't one that may be reached.
+	final bool
+}
+
+func (a attempt) ok() bool { return a.err == nil && a.status >= 200 && a.status < 300 }
+
+// retry is whether a failed attempt is worth making again: the receiver
+// couldn't be reached, timed out, was busy or broke. A refusal (another
+// 4xx) would be refused again.
+func (a attempt) retry() bool {
+	if a.err != nil {
+		return !a.final
 	}
+	return a.status >= 500 || a.status == http.StatusTooManyRequests || a.status == http.StatusRequestTimeout
+}
+
+// post makes one delivery of event to url, as delivery id.
+func (d *Dispatcher) post(ctx context.Context, h *Hook, event string, data any, url, id string) (a attempt) {
 	start := time.Now()
-	defer func() {
-		if rerr := d.record(ctx, h, event, data, body, test, status, time.Since(start), err); rerr != nil {
-			d.log.Warn("webhook delivery record", "webhook", h.ID, "err", rerr)
-		}
-	}()
-	if berr != nil {
-		return 0, berr
+	defer func() { a.took = time.Since(start) }()
+	out, err := d.build(h, event, data, id)
+	if out != nil {
+		a.body = out.Body
 	}
-	if err := outbound.CheckURL(url); err != nil {
-		return 0, err
+	if err == nil {
+		err = outbound.CheckURL(url)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	var req *http.Request
+	if err == nil {
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(out.Body))
+	}
 	if err != nil {
-		return 0, err
+		a.err, a.final = err, true
+		return a
 	}
 	req.Header = out.Header.Clone()
 	resp, err := outbound.Client.Do(req)
 	if err != nil {
-		return 0, err
+		a.err = err
+		return a
 	}
 	defer resp.Body.Close()
 	// Read some of the answer, so the connection can be reused; it isn't kept.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-	return resp.StatusCode, nil
+	a.status = resp.StatusCode
+	return a
 }
 
 // record writes down one delivery, with the event's data (what a test can
-// replay), and, unless it was a test, the webhook's last status.
-func (d *Dispatcher) record(ctx context.Context, h *Hook, event string, data any, body []byte, test bool, status int, took time.Duration, err error) error {
-	success := err == nil && status >= 200 && status < 300
+// replay), and, unless it was a test, the webhook's last status. It's
+// written whatever became of ctx: a delivery made is recorded.
+func (d *Dispatcher) record(ctx context.Context, h *Hook, event string, data any, test bool, a attempt) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := d.recordIn(ctx, h, event, data, test, a); err != nil {
+		d.log.Warn("webhook delivery record", "webhook", h.ID, "err", err)
+	}
+}
+
+func (d *Dispatcher) recordIn(ctx context.Context, h *Hook, event string, data any, test bool, a attempt) error {
+	success := a.ok()
 	var errText any
-	if err != nil {
-		errText = err.Error()
+	if a.err != nil {
+		errText = a.err.Error()
 	} else if !success {
-		errText = fmt.Sprintf("HTTP %d", status)
+		errText = fmt.Sprintf("HTTP %d", a.status)
 	}
 	eventData, _ := json.Marshal(data) // nil when it can't be: then null
 	_, ierr := d.db.ExecContext(ctx, `INSERT INTO webhook_deliveries (webhook_id, event, payload, event_data, test, response_status, success, duration_ms, error, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		h.ID, event, string(body), string(eventData), test, status, success, took.Milliseconds(), errText, store.Now().DB())
+		h.ID, event, string(a.body), string(eventData), test, a.status, success, a.took.Milliseconds(), errText, store.Now().DB())
 	var uerr error
 	if test {
 		return ierr
 	}
 	if success {
-		_, uerr = d.db.ExecContext(ctx, `UPDATE webhooks SET last_delivery_at = ?, last_status = ?, failure_count = 0 WHERE id = ?`, store.Now().DB(), strconv.Itoa(status), h.ID)
+		_, uerr = d.db.ExecContext(ctx, `UPDATE webhooks SET last_delivery_at = ?, last_status = ?, failure_count = 0 WHERE id = ?`, store.Now().DB(), strconv.Itoa(a.status), h.ID)
 	} else {
 		_, uerr = d.db.ExecContext(ctx, `UPDATE webhooks SET last_delivery_at = ?, last_status = ?, failure_count = failure_count + 1 WHERE id = ?`, store.Now().DB(), fmt.Sprint(errText), h.ID)
 	}
