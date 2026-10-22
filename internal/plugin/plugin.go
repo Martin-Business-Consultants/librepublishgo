@@ -12,6 +12,8 @@
 //	mail           API.Mail — email through Settings › Email
 //	media:write    API.PutMedia — a file into the media library
 //	http           API.HTTP — outbound requests, only to the hosts it declared
+//	site:read      API.Checks — the site's launch checklist: what the CMS and
+//	               the other plugins check about it (docs/launch-checklist.md)
 //	log, site      API.Log, API.Site — always
 //
 // A capability that wasn't granted answers an error instead of acting. A
@@ -47,6 +49,34 @@ type Module struct {
 	// Default plugins are installed on first run, granted what they ask for
 	// and switched on.
 	Default bool
+	// Checks are what the plugin adds to the site's launch checklist (a
+	// form's captcha keys, its hook): asked whenever the checklist is read,
+	// so they say how things are now. nil when it adds none.
+	Checks func(ctx context.Context, api *API) []Check
+}
+
+// A Check is one item of the site's launch checklist (docs/launch-checklist.md):
+// whether something a live site needs holds, and how it's known.
+type Check struct {
+	Key   string `json:"key"`   // "<group>.<name>", unique: "email.smtp"
+	Group string `json:"group"` // general, email, deploy, tokens, content, media, globals, forms, backup …
+	Title string `json:"title"` // what should hold: "Email can be sent"
+	// State is passes, fails, warns (works, but not as it should), unknown
+	// (no evidence yet) or n_a (doesn't apply to this site).
+	State string `json:"state"`
+	// Evidence is how it's known: what was looked at, and what it found.
+	Evidence string `json:"evidence"`
+	// Launch marks what a site shouldn't go live without; the rest is advice.
+	Launch bool `json:"launch,omitempty"`
+	// Manual is an item a person ticks (the site declared it, or the
+	// checklist has it): its State is todo until someone does.
+	Manual bool `json:"manual,omitempty"`
+	// Fix is where it's put right: an admin address ("#/settings/email").
+	Fix      string `json:"fix,omitempty"`
+	FixLabel string `json:"fix_label,omitempty"`
+	// Source is who checked: "cms", "build" (what the site's last build
+	// reported), or the plugin's key (set by the host).
+	Source string `json:"source"`
 }
 
 // Handler answers one of a plugin's routes.
@@ -132,6 +162,9 @@ type Grants struct {
 	Storage     bool `json:"storage"`
 	Mail        bool `json:"mail"`
 	MediaWrite  bool `json:"media:write"`
+	// SiteRead is reading the site's launch checklist (API.Checks): its
+	// settings' state, never their secrets.
+	SiteRead bool `json:"site:read"`
 	// HTTP is the hosts the plugin may call; SiteHosts among them stands
 	// for the site's own (its public URL's and its allowed origins').
 	HTTP []string `json:"http"`
@@ -230,6 +263,8 @@ type Env interface {
 	// plaintext again (a value that was never sealed, as it is).
 	Seal(plain string) string
 	Reveal(v string) string
+	// SiteChecks are the CMS's own items of the launch checklist.
+	SiteChecks(ctx context.Context) []Check
 }
 
 // Site is the site a plugin runs on.

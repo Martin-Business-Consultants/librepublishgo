@@ -20,6 +20,19 @@
       ],
       "key": "forms",
       "label": "Forms"
+    },
+    {
+      "badge": "/badge",
+      "group": "Tools",
+      "icon": "check-circle",
+      "items": [
+        {
+          "label": "Checklist",
+          "screen": "checks"
+        }
+      ],
+      "key": "launch",
+      "label": "Launch"
     }
   ]
 }

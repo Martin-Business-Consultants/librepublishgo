@@ -1,6 +1,7 @@
 package cms
 
 import (
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -23,14 +24,14 @@ func TestPlugin(t *testing.T) {
 
 	// It's available until it's installed; installing leaves it off.
 	r := s.must(200, s.do(s.admin, "GET", "/api/plugins", nil))
-	if dig(r.Body, "available", 1, "key") != "visits" || len(r.Body["plugins"].([]any)) != 0 {
+	if !slices.ContainsFunc(r.Body["available"].([]any), func(m any) bool { return dig(m, "key") == "visits" }) || len(r.Body["plugins"].([]any)) != 0 {
 		t.Fatalf("list: %s", r.Raw)
 	}
 	install := map[string]any{"plugin": map[string]any{"key": "visits"}}
 	s.must(403, s.do(s.agent, "POST", "/api/plugins", install))
 	s.must(404, s.do(s.admin, "POST", "/api/plugins", map[string]any{"plugin": map[string]any{"key": "nope"}}))
 	r = s.must(201, s.do(s.admin, "POST", "/api/plugins", install))
-	if a := s.must(200, s.do(s.admin, "GET", "/api/plugins", nil)).Body["available"].([]any); len(a) != 1 {
+	if a := s.must(200, s.do(s.admin, "GET", "/api/plugins", nil)).Body["available"].([]any); slices.ContainsFunc(a, func(m any) bool { return dig(m, "key") == "visits" }) {
 		t.Fatalf("still available after install: %v", a)
 	}
 	if dig(r.Body, "plugin", "enabled") != false || dig(r.Body, "plugin", "requested", "storage") != true || dig(r.Body, "plugin", "granted", "storage") != false {

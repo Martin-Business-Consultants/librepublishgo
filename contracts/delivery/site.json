@@ -106,7 +106,8 @@
       }
     },
     "plugins": [
-      "forms"
+      "forms",
+      "launch"
     ],
     "url": "https://acme.example"
   },

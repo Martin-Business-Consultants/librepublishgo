@@ -35,12 +35,13 @@
       "http": [],
       "mail": false,
       "media:write": false,
+      "site:read": false,
       "storage": false
     },
     "hooks": [
       "page.published"
     ],
-    "id": 2,
+    "id": 3,
     "key": "visits",
     "name": "Visits",
     "requested": {
@@ -48,6 +49,7 @@
       "http": [],
       "mail": false,
       "media:write": false,
+      "site:read": false,
       "storage": true
     },
     "routes": [

@@ -118,7 +118,7 @@
   {#if it.badge}<Badge status={it.value} />
   {:else if it.time}<Time value={it.value} />
   {:else if it.screen}<a class="text-primary hover:underline" href={screenHref(it.screen, it.params)}>{it.value}</a>
-  {:else if it.href && it.value}<a class="text-primary break-all hover:underline" href={it.href} target={it.href.startsWith("mailto:") ? undefined : "_blank"} rel="noreferrer">{it.value}</a>
+  {:else if it.href && it.value}<a class="text-primary break-all hover:underline" href={it.href} target={it.href.startsWith("mailto:") || it.href.startsWith("#") ? undefined : "_blank"} rel="noreferrer">{it.value}</a>
   {:else if it.tone}<span class={it.tone === "danger" ? "text-destructive" : "text-emerald-700 dark:text-emerald-400"}>{it.value}</span>
   {:else if it.multiline}<p class="whitespace-pre-wrap break-words">{it.value || "—"}</p>
   {:else}<span class="break-words">{it.value || "—"}</span>{/if}

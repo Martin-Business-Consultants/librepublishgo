@@ -17,7 +17,7 @@
     const r = await get("/plugins");
     list = r.plugins;
     available = r.available || [];
-    grants = Object.fromEntries(list.map((p) => [p.key, { "content:read": !!p.granted["content:read"], storage: !!p.granted.storage, mail: !!p.granted.mail, "media:write": !!p.granted["media:write"], http: [...(p.granted.http || [])] }]));
+    grants = Object.fromEntries(list.map((p) => [p.key, { "content:read": !!p.granted["content:read"], storage: !!p.granted.storage, mail: !!p.granted.mail, "media:write": !!p.granted["media:write"], "site:read": !!p.granted["site:read"], http: [...(p.granted.http || [])] }]));
   }
   load();
   async function install(m) {
@@ -54,11 +54,12 @@
         <div class="flex flex-col gap-4 p-6">
           <div class="flex flex-col gap-2">
             <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Asks for</h3>
-            {#if want["content:read"] || want.storage || want.mail || want["media:write"] || (want.http || []).length}
+            {#if want["content:read"] || want.storage || want.mail || want["media:write"] || want["site:read"] || (want.http || []).length}
               {#if want["content:read"]}<Checkbox bind:checked={g["content:read"]} label="Read live content" description="Pages, entries and globals as the site sees them." />{/if}
               {#if want.storage}<Checkbox bind:checked={g.storage} label="Its own storage" description="A private key–value store no other plugin can see." />{/if}
               {#if want.mail}<Checkbox bind:checked={g.mail} label="Send email" description="Through Settings › Email, at most 200 an hour." />{/if}
               {#if want["media:write"]}<Checkbox bind:checked={g["media:write"]} label="Add files to the media library" description="Up to 10 MB each, into its own folder." />{/if}
+              {#if want["site:read"]}<Checkbox bind:checked={g["site:read"]} label="Read the site's launch checklist" description="Whether settings, email, deploys, tokens, files and the other plugins are set up: their state, never their secrets." />{/if}
               {#each want.http || [] as host}
                 <Checkbox checked={g.http.includes(host)} onchange={(on) => (g.http = on ? [...g.http, host] : g.http.filter((x) => x !== host))} label="Call {host}" description="Outbound requests to this host only." />
               {/each}

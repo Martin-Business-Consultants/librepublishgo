@@ -15,10 +15,11 @@ coverage.out
 /tmp/
 /vendor/
 /node_modules/
-# Rails-engine plugin checkouts (main's plugins/); only plugins/forms and
-# plugins/visits are this repo's.
+# Rails-engine plugin checkouts (main's plugins/); only plugins/forms,
+# plugins/launch and plugins/visits are this repo's.
 /plugins/*
 !/plugins/forms/
+!/plugins/launch/
 !/plugins/visits/
 /ui/node_modules/
 /librepublish

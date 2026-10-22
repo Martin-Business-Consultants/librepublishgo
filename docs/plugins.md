@@ -124,6 +124,7 @@ wasn't granted to this plugin`) and does nothing.
 | `KVAll(ctx, prefix)`, `KVCount(ctx, prefix)` | `storage` | every key under a prefix; how many |
 | `Mail(ctx, mail.Message)` | `mail` | sent through Settings › Email (from its defaults where blank); ≤ 50 recipients, ≤ 200 messages an hour |
 | `MailVisitor(ctx, mail.Message)` | `mail` | `Mail` for a message to an address a visitor gave (one `To`, no Cc/Bcc): its own ≤ 200 an hour, apart from `Mail`'s, and ≤ 3 an hour to any one address |
+| `Checks(ctx)` | `site:read` | the site's launch checklist: the CMS's own items, then every other enabled plugin's (`Module.Checks`), each a `plugin.Check{Key, Group, Title, State, Evidence, Launch, Fix, FixLabel, Source}` (docs/launch-checklist.md) |
 | `PutMedia(ctx, plugin.Media)` | `media:write` | a file (≤ 10 MB) into the media library, answered as the media API shows it; the folder defaults to `Plugins/<key>` |
 | `HTTP()` | `http` | an `*http.Client` that reaches only the granted hosts (redirects included) and reads ≤ 4 MB of a response; `@site` (`plugin.SiteHosts`) among them grants the site's own hosts, its public URL's and its allowed origins', as they are at each request |
 | `Emit(ctx, event, data)` | the event in `Events` | sends it to webhooks and plugins, in the background |
@@ -208,13 +209,27 @@ keep}` (a GET route, keeping the given query params) or `{label, post}`.
 A sandboxed iframe served from a route is still the escape hatch for what
 data can't describe.
 
+## Adding to the launch checklist
+
+A module's `Checks func(ctx, api) []plugin.Check` adds items to the site's
+launch checklist (the Launch plugin, Tools › Launch): asked each time the
+checklist is read, so it says how things are now. Forms adds its forms'
+captcha keys, recipients and hooks. Each item says what should hold
+(`Title`), whether it does (`State`: `passes`, `fails`, `warns`,
+`unknown`, `n_a`) and how it knows (`Evidence`), whether a site shouldn't go
+live without it (`Launch`), and where it's put right (`Fix`, an admin
+address). The host sets `Source` to the plugin's key; a panic or a time-out
+is shown as one `unknown` item. See docs/launch-checklist.md.
+
 ## Default plugins
 
 A module with `Default: true` is installed on first run, granted what it
 asks for and switched on. A new build upgrades it in place, granted what it
 asks for and on or off as it was. Removing one removes it for good: it isn't
 put back (though it can be installed again from Available). Today that's
-**Forms** ([plugins/forms](../plugins/forms), [docs/forms.md](forms.md)).
+**Forms** ([plugins/forms](../plugins/forms), [docs/forms.md](forms.md)) and
+**Launch checklist** ([plugins/launch](../plugins/launch),
+[docs/launch-checklist.md](launch-checklist.md)).
 
 ## Porting the Rails engines
 

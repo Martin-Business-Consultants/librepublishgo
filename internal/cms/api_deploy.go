@@ -133,7 +133,9 @@ func (a *App) reportBuild(c *Ctx) error {
 		return err
 	}
 	report := map[string]any{"render": body["render"], "webhook_url": body["webhook_url"], "content_cursor": body["content_cursor"],
-		"reported_at": time.Now().UTC().Format(time.RFC3339), "by": c.Actor.Label()}
+		"reported_at": time.Now().UTC().Format(time.RFC3339), "by": c.Actor.Label(),
+		"integration": clip(str(body["integration"]), 100), "integration_version": clip(str(body["integration_version"]), 50),
+		"checks": buildChecks(body["checks"]), "checks_url": httpURL(str(body["checks_url"]))}
 	if _, err := a.putSetting(c.R.Context(), nil, "frontend_build", report, true); err != nil {
 		return err
 	}

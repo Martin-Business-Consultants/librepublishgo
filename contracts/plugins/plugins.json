@@ -9,6 +9,7 @@
         "http": [],
         "mail": false,
         "media:write": false,
+        "site:read": false,
         "storage": true
       },
       "version": "1.0.0"
@@ -1020,6 +1021,7 @@
         ],
         "mail": true,
         "media:write": true,
+        "site:read": false,
         "storage": true
       },
       "hooks": null,
@@ -1035,6 +1037,7 @@
         ],
         "mail": true,
         "media:write": true,
+        "site:read": false,
         "storage": true
       },
       "routes": [
@@ -1158,6 +1161,179 @@
       ],
       "updated_at": "2026-01-01T00:00:00.000Z",
       "version": "1.6.0"
+    },
+    {
+      "admin": {
+        "menu": {
+          "badge": "/badge",
+          "group": "Tools",
+          "icon": "check-circle",
+          "label": "Launch"
+        },
+        "screens": [
+          {
+            "id": "checks",
+            "menu": "Checklist",
+            "source": "/checks",
+            "table": {
+              "columns": [
+                {
+                  "key": "title",
+                  "label": "Item",
+                  "link": {
+                    "params": {
+                      "id": "key"
+                    },
+                    "screen": "check"
+                  },
+                  "sub": "evidence"
+                },
+                {
+                  "badge": true,
+                  "key": "state",
+                  "label": "State"
+                },
+                {
+                  "key": "group_label",
+                  "label": "Area"
+                },
+                {
+                  "key": "launch_label",
+                  "label": "Blocks launch"
+                }
+              ],
+              "empty": {
+                "text": "Every item in this view is done.",
+                "title": "Nothing to show"
+              },
+              "key": "key",
+              "row_actions": [
+                {
+                  "label": "Details",
+                  "params": {
+                    "id": "key"
+                  },
+                  "screen": "check"
+                }
+              ],
+              "rows": "checks",
+              "status_links": {
+                "options": "views",
+                "param": "show"
+              }
+            },
+            "title": "Launch checklist"
+          },
+          {
+            "detail": {
+              "actions": [
+                {
+                  "body": {
+                    "done": true
+                  },
+                  "label": "Mark done",
+                  "params": {
+                    "id": "key"
+                  },
+                  "post": "/manual",
+                  "show_if": {
+                    "done": false,
+                    "manual": true
+                  }
+                },
+                {
+                  "body": {
+                    "done": false
+                  },
+                  "label": "Mark not done",
+                  "params": {
+                    "id": "key"
+                  },
+                  "post": "/manual",
+                  "show_if": {
+                    "done": true,
+                    "manual": true
+                  }
+                }
+              ],
+              "main": [
+                {
+                  "items": "found",
+                  "title": "What it found"
+                }
+              ],
+              "record": "check",
+              "side": [
+                {
+                  "items": "about",
+                  "title": "Item"
+                }
+              ]
+            },
+            "id": "check",
+            "parent": "checks",
+            "source": "/check",
+            "title": "Checklist item",
+            "title_key": "title"
+          }
+        ]
+      },
+      "built_in": true,
+      "created_at": "2026-01-01T00:00:00.000Z",
+      "description": "Whether the site is ready to go live, and stays ready: what the CMS and its plugins check themselves, with the evidence, and what a person ticks.",
+      "enabled": true,
+      "granted": {
+        "content:read": false,
+        "http": [],
+        "mail": false,
+        "media:write": false,
+        "site:read": true,
+        "storage": true
+      },
+      "hooks": null,
+      "id": 2,
+      "key": "launch",
+      "name": "Launch checklist",
+      "requested": {
+        "content:read": false,
+        "http": [],
+        "mail": false,
+        "media:write": false,
+        "site:read": true,
+        "storage": true
+      },
+      "routes": [
+        {
+          "capability": "launch:read",
+          "export": "checks",
+          "method": "GET",
+          "path": "/checks",
+          "public": false
+        },
+        {
+          "capability": "launch:read",
+          "export": "check",
+          "method": "GET",
+          "path": "/check",
+          "public": false
+        },
+        {
+          "capability": "launch:read",
+          "export": "badge",
+          "method": "GET",
+          "path": "/badge",
+          "public": false
+        },
+        {
+          "capability": "launch:write",
+          "export": "tick",
+          "method": "POST",
+          "path": "/manual",
+          "public": false
+        }
+      ],
+      "updated_at": "2026-01-01T00:00:00.000Z",
+      "version": "1.0.0"
     }
   ]
 }

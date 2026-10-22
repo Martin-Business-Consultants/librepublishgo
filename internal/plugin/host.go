@@ -241,6 +241,37 @@ func (h *Host) Serve(ctx context.Context, key, export string, req *Request) (*Re
 	return res, err
 }
 
+// PluginChecks are the launch checklist's items the enabled plugins add
+// (Module.Checks), each marked with its plugin as Source; except leaves
+// one out (the checklist's own plugin). A plugin whose checks fail or time
+// out says so as one unknown item, rather than holding up the rest.
+func (h *Host) PluginChecks(ctx context.Context, except string) []Check {
+	out := []Check{}
+	for _, p := range h.List() {
+		if p.Key == except {
+			continue
+		}
+		p, api := h.enabled(p.Key)
+		if p == nil || p.module.Checks == nil {
+			continue
+		}
+		var checks []Check
+		err := guard(ctx, "plugin "+p.Key+" checks", func(ctx context.Context) error {
+			checks = p.module.Checks(ctx, api)
+			return nil
+		})
+		if err != nil {
+			h.log.Warn("plugin checks", "plugin", p.Key, "err", err)
+			checks = []Check{{Key: p.Key + ".checks", Group: p.Key, Title: p.Manifest.Name + " can check itself", State: "unknown", Evidence: "Its checks failed: " + truncate(err.Error(), 300)}}
+		}
+		for _, c := range checks {
+			c.Source = p.Key
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // Emit hands an event to every enabled plugin that hooks it, in the
 // background: a slow or failing plugin never holds up a save. At most
 // maxEmits hooks run at once, so a burst of saves can't run thousands.
@@ -302,7 +333,7 @@ func (h *Host) Install(ctx context.Context, actor Actor, key string) (*Plugin, e
 // intersectGrants is what's both granted and asked for.
 func intersectGrants(granted, asked Grants) Grants {
 	out := Grants{ContentRead: granted.ContentRead && asked.ContentRead, Storage: granted.Storage && asked.Storage,
-		Mail: granted.Mail && asked.Mail, MediaWrite: granted.MediaWrite && asked.MediaWrite, HTTP: []string{}}
+		Mail: granted.Mail && asked.Mail, MediaWrite: granted.MediaWrite && asked.MediaWrite, SiteRead: granted.SiteRead && asked.SiteRead, HTTP: []string{}}
 	for _, host := range granted.HTTP {
 		if slices.Contains(asked.HTTP, host) {
 			out.HTTP = append(out.HTTP, host)
@@ -313,7 +344,7 @@ func intersectGrants(granted, asked Grants) Grants {
 
 // grantsCover says whether granted holds all that's asked for.
 func grantsCover(granted, asked Grants) bool {
-	if asked.ContentRead && !granted.ContentRead || asked.Storage && !granted.Storage || asked.Mail && !granted.Mail || asked.MediaWrite && !granted.MediaWrite {
+	if asked.ContentRead && !granted.ContentRead || asked.Storage && !granted.Storage || asked.Mail && !granted.Mail || asked.MediaWrite && !granted.MediaWrite || asked.SiteRead && !granted.SiteRead {
 		return false
 	}
 	for _, host := range asked.HTTP {

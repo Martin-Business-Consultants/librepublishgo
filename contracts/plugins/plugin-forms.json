@@ -1004,6 +1004,7 @@
       ],
       "mail": true,
       "media:write": true,
+      "site:read": false,
       "storage": true
     },
     "hooks": null,
@@ -1019,6 +1020,7 @@
       ],
       "mail": true,
       "media:write": true,
+      "site:read": false,
       "storage": true
     },
     "routes": [

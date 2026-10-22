@@ -289,6 +289,7 @@ func Module() *plugin.Module {
 			"set_submission_status": handle((*call).setSubmissionStatus),
 			"delete_submission":     handle((*call).deleteSubmission),
 		},
+		Checks:  checks,
 		Default: true,
 	}
 }

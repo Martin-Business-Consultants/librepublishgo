@@ -132,6 +132,9 @@ func (a *App) siteInfo(ctx context.Context) []infoSection {
 		if p.Granted.MediaWrite {
 			grants = append(grants, "media:write")
 		}
+		if p.Granted.SiteRead {
+			grants = append(grants, "site:read")
+		}
 		for _, h := range p.Granted.HTTP {
 			grants = append(grants, "http:"+h)
 		}

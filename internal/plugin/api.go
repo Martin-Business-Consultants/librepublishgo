@@ -46,6 +46,21 @@ func (a *API) Log(msg string) {
 // Site is the site the plugin runs on.
 func (a *API) Site(ctx context.Context) (Site, error) { return a.h.env.Site(ctx) }
 
+// Checks are the site's launch checklist (site:read): the CMS's own items,
+// then every other enabled plugin's (Module.Checks).
+func (a *API) Checks(ctx context.Context) ([]Check, error) {
+	if err := a.need("site:read", a.grants.SiteRead); err != nil {
+		return nil, err
+	}
+	checks := a.h.env.SiteChecks(ctx)
+	for i := range checks {
+		if checks[i].Source == "" {
+			checks[i].Source = "cms"
+		}
+	}
+	return append(checks, a.h.PluginChecks(ctx, a.key)...), nil
+}
+
 // Emit sends one of the plugin's events (its manifest's Events) to the
 // webhooks that take it and the plugins that hook it, in the background.
 func (a *API) Emit(ctx context.Context, event string, data any) error {

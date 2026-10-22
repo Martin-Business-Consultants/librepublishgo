@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -120,6 +121,9 @@ func (e *siteEnv) Deliver(_ context.Context, event string, _ any) {
 }
 func (e *siteEnv) Seal(plain string) string { return plain }
 func (e *siteEnv) Reveal(v string) string   { return v }
+func (e *siteEnv) SiteChecks(context.Context) []Check {
+	return []Check{{Key: "general.site_url", Group: "general", Title: "The public site's address is set", State: "passes"}}
+}
 
 // SiteHosts grants the site's own origins as they are when it calls: one
 // added later is reached, one that isn't the site's isn't.
@@ -156,5 +160,37 @@ func TestEmitDeclaredEvents(t *testing.T) {
 	}
 	if err := api.Emit(t.Context(), "thing.done", nil); err != nil || len(env.delivered) != 1 {
 		t.Fatalf("declared: %v %v", err, env.delivered)
+	}
+}
+
+// The launch checklist: site:read is needed; the CMS's items come first,
+// then each enabled plugin's (its key as their source), and one whose
+// checks panic is one unknown item, not a failed checklist.
+func TestChecks(t *testing.T) {
+	t.Parallel()
+	env := &siteEnv{}
+	h := &Host{env: env, log: slog.New(slog.DiscardHandler), plugins: map[string]*Plugin{}}
+	add := func(key string, checks func(context.Context, *API) []Check) {
+		h.plugins[key] = &Plugin{Key: key, Enabled: true, Manifest: Manifest{Key: key, Name: strings.ToUpper(key)}, module: &Module{Checks: checks}}
+	}
+	add("good", func(context.Context, *API) []Check {
+		return []Check{{Key: "good.one", Group: "good", Title: "Good", State: "passes", Source: "lies"}}
+	})
+	add("broken", func(context.Context, *API) []Check { panic("oops") })
+	add("me", func(context.Context, *API) []Check { t.Error("a checklist asked itself"); return nil })
+
+	if _, err := (&API{h: h, key: "me"}).Checks(t.Context()); err == nil || !strings.Contains(err.Error(), "site:read") {
+		t.Fatalf("without site:read: %v", err)
+	}
+	checks, err := (&API{h: h, key: "me", grants: Grants{SiteRead: true}}).Checks(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]Check{}
+	for _, c := range checks {
+		got[c.Key] = c
+	}
+	if checks[0].Source != "cms" || got["good.one"].Source != "good" || got["broken.checks"].State != "unknown" || !strings.Contains(got["broken.checks"].Evidence, "oops") {
+		t.Fatalf("checks: %+v", checks)
 	}
 }
