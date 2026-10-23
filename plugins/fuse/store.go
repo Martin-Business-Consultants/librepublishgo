@@ -283,6 +283,14 @@ func loadVersion(ctx context.Context, h host, a Active) (*version, error) {
 			return other, nil
 		}
 	}
+	// The site's other versions go: one is loaded again if it's rolled back to.
+	site, _, _ := strings.Cut(ck, "\x00")
+	versions.Range(func(k, _ any) bool {
+		if key, ok := k.(string); ok && key != ck && strings.HasPrefix(key, site+"\x00") {
+			versions.Delete(key)
+		}
+		return true
+	})
 	return v, nil
 }
 

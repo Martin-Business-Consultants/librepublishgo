@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -90,9 +91,21 @@ func TestFusePricing(t *testing.T) {
 	if !strings.Contains(string(r.Raw), "/api/x/fuse/quote") {
 		t.Fatalf("site config: %s", r.Raw)
 	}
-	// The launch checklist hears from it.
 	r = s.must(200, s.do(s.admin, "GET", "/api/x/fuse/admin/overview", nil))
 	if dig(r.Body, "overview", "published") != true {
 		t.Fatalf("overview: %s", r.Raw)
+	}
+	// Every admin screen's source answers, for a new record and an existing one.
+	r = s.must(200, s.do(s.admin, "GET", "/api/plugins/fuse/admin", nil))
+	screens, _ := dig(r.Body, "plugin", "screens").([]any)
+	if len(screens) < 15 {
+		t.Fatalf("admin: %s", r.Raw)
+	}
+	for _, sc := range screens {
+		s.must(200, s.do(s.admin, "GET", "/api/x/fuse"+str(dig(sc, "source")), nil))
+	}
+	for _, kind := range []string{"product", "fee", "zone", "location", "discount", "service_type", "product_type"} {
+		rows := s.must(200, s.do(s.admin, "GET", "/api/x/fuse/admin/"+kind+"s", nil)).Body[kind+"s"].([]any)
+		s.must(200, s.do(s.admin, "GET", "/api/x/fuse/admin/"+kind+"?id="+strconv.Itoa(int(dig(rows[0], "id").(float64))), nil))
 	}
 }
