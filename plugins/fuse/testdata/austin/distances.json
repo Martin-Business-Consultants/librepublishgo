@@ -1,0 +1,606 @@
+{
+  "78747, USA → 78610, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      14444
+    ],
+    "legs_seconds": [
+      808
+    ]
+  },
+  "78747, USA → 78610, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      30204
+    ],
+    "legs_seconds": [
+      1140,
+      1689
+    ]
+  },
+  "78747, USA → 78613, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      55119
+    ],
+    "legs_seconds": [
+      3082
+    ]
+  },
+  "78747, USA → 78620, USA → 78738": {
+    "status": "OK",
+    "legs_meters": [
+      42150,
+      23232
+    ],
+    "legs_seconds": [
+      2357,
+      1299
+    ]
+  },
+  "78747, USA → 78626, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      56942
+    ],
+    "legs_seconds": [
+      1140,
+      3184
+    ]
+  },
+  "78747, USA → 78640, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      25963
+    ],
+    "legs_seconds": [
+      1452
+    ]
+  },
+  "78747, USA → 78660, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      49357
+    ],
+    "legs_seconds": [
+      2760
+    ]
+  },
+  "78747, USA → 78660, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      31405
+    ],
+    "legs_seconds": [
+      1140,
+      1756
+    ]
+  },
+  "78747, USA → 78701, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      20384
+    ],
+    "legs_seconds": [
+      1140
+    ]
+  },
+  "78747, USA → 78701, USA → 78610": {
+    "status": "OK",
+    "legs_meters": [
+      14444,
+      30204
+    ],
+    "legs_seconds": [
+      808,
+      1689
+    ]
+  },
+  "78747, USA → 78701, USA → 78640": {
+    "status": "OK",
+    "legs_meters": [
+      25963,
+      43658
+    ],
+    "legs_seconds": [
+      1452,
+      2442
+    ]
+  },
+  "78747, USA → 78702, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      3682
+    ],
+    "legs_seconds": [
+      1140,
+      206
+    ]
+  },
+  "78747, USA → 78704, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      16631
+    ],
+    "legs_seconds": [
+      930
+    ]
+  },
+  "78747, USA → 78738, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      42150
+    ],
+    "legs_seconds": [
+      2357
+    ]
+  },
+  "78747, USA → 78738, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      31110
+    ],
+    "legs_seconds": [
+      1140,
+      1740
+    ]
+  },
+  "78747, USA → 78745, USA → 78704": {
+    "status": "OK",
+    "legs_meters": [
+      16631,
+      6486
+    ],
+    "legs_seconds": [
+      930,
+      363
+    ]
+  },
+  "78747, USA → 78747, USA → 78610": {
+    "status": "OK",
+    "legs_meters": [
+      14444,
+      14444
+    ],
+    "legs_seconds": [
+      808,
+      808
+    ]
+  },
+  "78747, USA → 78747, USA → 78610|78701": {
+    "status": "OK",
+    "legs_meters": [
+      14444,
+      30204,
+      20384
+    ],
+    "legs_seconds": [
+      808,
+      1689,
+      1140
+    ]
+  },
+  "78747, USA → 78747, USA → 78613": {
+    "status": "OK",
+    "legs_meters": [
+      55119,
+      55119
+    ],
+    "legs_seconds": [
+      3082,
+      3082
+    ]
+  },
+  "78747, USA → 78747, USA → 78613|78660": {
+    "status": "OK",
+    "legs_meters": [
+      55119,
+      29097,
+      49357
+    ],
+    "legs_seconds": [
+      3082,
+      1627,
+      2760
+    ]
+  },
+  "78747, USA → 78747, USA → 78613|78748": {
+    "status": "OK",
+    "legs_meters": [
+      55119,
+      49727,
+      11187
+    ],
+    "legs_seconds": [
+      3082,
+      2781,
+      626
+    ]
+  },
+  "78747, USA → 78747, USA → 78620": {
+    "status": "OK",
+    "legs_meters": [
+      48033,
+      48033
+    ],
+    "legs_seconds": [
+      2686,
+      2686
+    ]
+  },
+  "78747, USA → 78747, USA → 78626": {
+    "status": "OK",
+    "legs_meters": [
+      77109,
+      77109
+    ],
+    "legs_seconds": [
+      4312,
+      4312
+    ]
+  },
+  "78747, USA → 78747, USA → 78640": {
+    "status": "OK",
+    "legs_meters": [
+      25963,
+      25963
+    ],
+    "legs_seconds": [
+      1452,
+      1452
+    ]
+  },
+  "78747, USA → 78747, USA → 78640|78701": {
+    "status": "OK",
+    "legs_meters": [
+      25963,
+      43658,
+      20384
+    ],
+    "legs_seconds": [
+      1452,
+      2442,
+      1140
+    ]
+  },
+  "78747, USA → 78747, USA → 78660": {
+    "status": "OK",
+    "legs_meters": [
+      49357,
+      49357
+    ],
+    "legs_seconds": [
+      2760,
+      2760
+    ]
+  },
+  "78747, USA → 78747, USA → 78664": {
+    "status": "OK",
+    "legs_meters": [
+      55972,
+      55972
+    ],
+    "legs_seconds": [
+      3130,
+      3130
+    ]
+  },
+  "78747, USA → 78747, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      20384
+    ],
+    "legs_seconds": [
+      1140,
+      1140
+    ]
+  },
+  "78747, USA → 78747, USA → 78701|78610": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      30204,
+      14444
+    ],
+    "legs_seconds": [
+      1140,
+      1689,
+      808
+    ]
+  },
+  "78747, USA → 78747, USA → 78701|78626": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      56942,
+      77109
+    ],
+    "legs_seconds": [
+      1140,
+      3184,
+      4312
+    ]
+  },
+  "78747, USA → 78747, USA → 78701|78660": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      31405,
+      49357
+    ],
+    "legs_seconds": [
+      1140,
+      1756,
+      2760
+    ]
+  },
+  "78747, USA → 78747, USA → 78701|78702": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      3682,
+      19498
+    ],
+    "legs_seconds": [
+      1140,
+      206,
+      1090
+    ]
+  },
+  "78747, USA → 78747, USA → 78701|78738": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      31110,
+      42150
+    ],
+    "legs_seconds": [
+      1140,
+      1740,
+      2357
+    ]
+  },
+  "78747, USA → 78747, USA → 78701|78799": {
+    "status": "ZERO_RESULTS"
+  },
+  "78747, USA → 78747, USA → 78701|90210": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      2583376,
+      2589892
+    ],
+    "legs_seconds": [
+      1140,
+      144471,
+      144836
+    ]
+  },
+  "78747, USA → 78747, USA → 78702": {
+    "status": "OK",
+    "legs_meters": [
+      19498,
+      19498
+    ],
+    "legs_seconds": [
+      1090,
+      1090
+    ]
+  },
+  "78747, USA → 78747, USA → 78703": {
+    "status": "OK",
+    "legs_meters": [
+      23768,
+      23768
+    ],
+    "legs_seconds": [
+      1329,
+      1329
+    ]
+  },
+  "78747, USA → 78747, USA → 78703|78660": {
+    "status": "OK",
+    "legs_meters": [
+      23768,
+      30761,
+      49357
+    ],
+    "legs_seconds": [
+      1329,
+      1720,
+      2760
+    ]
+  },
+  "78747, USA → 78747, USA → 78704": {
+    "status": "OK",
+    "legs_meters": [
+      16631,
+      16631
+    ],
+    "legs_seconds": [
+      930,
+      930
+    ]
+  },
+  "78747, USA → 78747, USA → 78704|78745": {
+    "status": "OK",
+    "legs_meters": [
+      16631,
+      6486,
+      13148
+    ],
+    "legs_seconds": [
+      930,
+      363,
+      735
+    ]
+  },
+  "78747, USA → 78747, USA → 78738": {
+    "status": "OK",
+    "legs_meters": [
+      42150,
+      42150
+    ],
+    "legs_seconds": [
+      2357,
+      2357
+    ]
+  },
+  "78747, USA → 78747, USA → 78738|78620": {
+    "status": "OK",
+    "legs_meters": [
+      42150,
+      23232,
+      48033
+    ],
+    "legs_seconds": [
+      2357,
+      1299,
+      2686
+    ]
+  },
+  "78747, USA → 78747, USA → 78738|78660": {
+    "status": "OK",
+    "legs_meters": [
+      42150,
+      50591,
+      49357
+    ],
+    "legs_seconds": [
+      2357,
+      2829,
+      2760
+    ]
+  },
+  "78747, USA → 78747, USA → 78745": {
+    "status": "OK",
+    "legs_meters": [
+      13148,
+      13148
+    ],
+    "legs_seconds": [
+      735,
+      735
+    ]
+  },
+  "78747, USA → 78747, USA → 78746": {
+    "status": "OK",
+    "legs_meters": [
+      25539,
+      25539
+    ],
+    "legs_seconds": [
+      1428,
+      1428
+    ]
+  },
+  "78747, USA → 78747, USA → 78747": {
+    "status": "OK",
+    "legs_meters": [
+      350,
+      350
+    ],
+    "legs_seconds": [
+      20,
+      20
+    ]
+  },
+  "78747, USA → 78747, USA → 78747|78747": {
+    "status": "OK",
+    "legs_meters": [
+      350,
+      350,
+      350
+    ],
+    "legs_seconds": [
+      20,
+      20,
+      20
+    ]
+  },
+  "78747, USA → 78747, USA → 78748": {
+    "status": "OK",
+    "legs_meters": [
+      11187,
+      11187
+    ],
+    "legs_seconds": [
+      626,
+      626
+    ]
+  },
+  "78747, USA → 78747, USA → 78749": {
+    "status": "OK",
+    "legs_meters": [
+      19006,
+      19006
+    ],
+    "legs_seconds": [
+      1063,
+      1063
+    ]
+  },
+  "78747, USA → 78747, USA → 78799": {
+    "status": "ZERO_RESULTS"
+  },
+  "78747, USA → 78747, USA → 90210": {
+    "status": "OK",
+    "legs_meters": [
+      2589892,
+      2589892
+    ],
+    "legs_seconds": [
+      144836,
+      144836
+    ]
+  },
+  "78747, USA → 78748, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      11187
+    ],
+    "legs_seconds": [
+      626
+    ]
+  },
+  "78747, USA → 78748, USA → 78613": {
+    "status": "OK",
+    "legs_meters": [
+      55119,
+      49727
+    ],
+    "legs_seconds": [
+      3082,
+      2781
+    ]
+  },
+  "78747, USA → 78799, USA → 78701": {
+    "status": "ZERO_RESULTS"
+  },
+  "78747, USA → 90210, USA → ": {
+    "status": "OK",
+    "legs_meters": [
+      2589892
+    ],
+    "legs_seconds": [
+      144836
+    ]
+  },
+  "78747, USA → 90210, USA → 78701": {
+    "status": "OK",
+    "legs_meters": [
+      20384,
+      2583376
+    ],
+    "legs_seconds": [
+      1140,
+      144471
+    ]
+  }
+}

@@ -16,9 +16,10 @@ coverage.out
 /vendor/
 /node_modules/
 # Rails-engine plugin checkouts (main's plugins/); only plugins/forms,
-# plugins/launch and plugins/visits are this repo's.
+# plugins/fuse, plugins/launch and plugins/visits are this repo's.
 /plugins/*
 !/plugins/forms/
+!/plugins/fuse/
 !/plugins/launch/
 !/plugins/visits/
 /ui/node_modules/
