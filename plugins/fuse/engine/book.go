@@ -222,9 +222,14 @@ func NewMapZips(zips []ZipCode) *MapZips {
 	return m
 }
 
+// Zip is the record for exactly code.
 func (m *MapZips) Zip(code string) *ZipCode { return m.byCode[code] }
-func (m *MapZips) Any() bool                { return len(m.byCode) > 0 }
-func (m *MapZips) Served(zip5 string) bool  { return m.byCode[zip5] != nil || m.plus4[zip5] }
+
+// Any says whether there are any ZIPs.
+func (m *MapZips) Any() bool { return len(m.byCode) > 0 }
+
+// Served says whether zip5, or a ZIP+4 under it, is in the table.
+func (m *MapZips) Served(zip5 string) bool { return m.byCode[zip5] != nil || m.plus4[zip5] }
 
 // Index is a book made ready to price from: its records by id and its joins
 // inverted, built once per published version.

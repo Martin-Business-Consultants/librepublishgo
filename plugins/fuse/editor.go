@@ -72,7 +72,7 @@ func (f form) list(k string) []string {
 			}
 		}
 	case string:
-		for _, s := range strings.Split(v, ",") {
+		for s := range strings.SplitSeq(v, ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				out = append(out, s)
 			}
@@ -889,8 +889,8 @@ func filterErrs(all map[string][]string, plural string, id int64, b *engine.Book
 	prefix := fmt.Sprintf("%s[%d].", plural, idx)
 	out := map[string][]string{}
 	for k, v := range all {
-		if strings.HasPrefix(k, prefix) {
-			out[strings.TrimPrefix(k, prefix)] = v
+		if field, ok := strings.CutPrefix(k, prefix); ok {
+			out[field] = v
 		}
 	}
 	return out

@@ -25,7 +25,7 @@ import (
 // or last name — only a first name — and isn't encrypted: a site may read
 // it with no CMS (atob) to show the quoted figures when the CMS is down.
 const (
-	keyTokenKeys = "cfg:token_keys"
+	keyTokenKeys = "cfg:token_keys" //nolint:gosec // the name of a storage key, not a credential
 	tokenPrefix  = "v1."
 	macBytes     = 16
 	maxToken     = 8 << 10
@@ -63,6 +63,7 @@ type TokenFigs struct {
 	Dist     string         `json:"dist"` // the distance status it was priced with
 }
 
+// TokenProduct is a product line as a token carries it.
 type TokenProduct struct {
 	N string `json:"n"` // name
 	Q int64  `json:"q"` // quantity
@@ -70,6 +71,7 @@ type TokenProduct struct {
 	S int64  `json:"s"` // subtotal
 }
 
+// TokenFee is a fee line as a token carries it, its flags as 0 or 1.
 type TokenFee struct {
 	N  string `json:"n"`
 	A  int64  `json:"a"`

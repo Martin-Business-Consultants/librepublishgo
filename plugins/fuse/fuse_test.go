@@ -11,12 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +43,7 @@ type fakeHost struct {
 }
 
 func newHost(t *testing.T) *fakeHost {
+	t.Helper()
 	return &fakeHost{site: "https://cms-" + strings.ReplaceAll(t.Name(), "/", "-") + ".test", kv: map[string]string{}}
 }
 
@@ -50,7 +53,9 @@ func (h *fakeHost) Log(msg string) {
 	defer h.mu.Unlock()
 	h.logs = append(h.logs, msg)
 }
-func (h *fakeHost) Site(context.Context) (plugin.Site, error) { return plugin.Site{CMSURL: h.site}, nil }
+func (h *fakeHost) Site(context.Context) (plugin.Site, error) {
+	return plugin.Site{CMSURL: h.site}, nil
+}
 func (h *fakeHost) Seal(p string) string {
 	if p == "" || strings.HasPrefix(p, "sealed:") {
 		return p
@@ -109,7 +114,7 @@ func (h *fakeHost) KVAdd(_ context.Context, key string, d int64) (int64, error) 
 	var n int64
 	fmt.Sscan(h.kv[key], &n)
 	n += d
-	h.kv[key] = fmt.Sprint(n)
+	h.kv[key] = strconv.FormatInt(n, 10)
 	return n, nil
 }
 func (h *fakeHost) KVDelete(_ context.Context, key string) error {
@@ -172,6 +177,7 @@ func do(t *testing.T, h *fakeHost, fn func(*call) *plugin.Response, method, path
 }
 
 func must(t *testing.T, want int) func(int, map[string]any) map[string]any {
+	t.Helper()
 	return func(got int, body map[string]any) map[string]any {
 		t.Helper()
 		if got != want {
@@ -182,11 +188,11 @@ func must(t *testing.T, want int) func(int, map[string]any) map[string]any {
 	}
 }
 
-func readFile(t testing.TB, name string) string {
-	t.Helper()
+func readFile(tb testing.TB, name string) string {
+	tb.Helper()
 	b, err := os.ReadFile("testdata/austin/" + name)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return string(b)
 }
@@ -212,6 +218,7 @@ type goldenPreview struct {
 }
 
 func goldens(t *testing.T) []goldenPreview {
+	t.Helper()
 	f, err := os.Open("testdata/austin/goldens.json.gz")
 	if err != nil {
 		t.Fatal(err)
@@ -243,9 +250,7 @@ func quoteFor(t *testing.T, h *fakeHost, req map[string]any, extra map[string]an
 	if q, ok := req["quantities"]; ok {
 		body["quantities"] = q
 	}
-	for k, v := range extra {
-		body[k] = v
-	}
+	maps.Copy(body, extra)
 	return must(t, 200)(do(t, h, (*call).quote, "POST", "/quote", body, nil))
 }
 
@@ -434,7 +439,7 @@ func (g *googleFake) RoundTrip(r *http.Request) (*http.Response, error) {
 		}
 		body = `{"status":"OK","routes":[{"legs":[` + strings.Join(legs, ",") + `]}]}`
 	}
-	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
 
 // With a Google key the plugin asks Google what Fuse asks, gets Fuse's
@@ -489,7 +494,7 @@ func TestGoogleDistances(t *testing.T) {
 		t.Fatalf("not cached: %d calls, %v", len(g.calls)-before, r["distance"])
 	}
 	month := h.kv["stats:google:"+time.Now().UTC().Format("200601")]
-	if month != fmt.Sprint(before) {
+	if month != strconv.Itoa(before) {
 		t.Errorf("calls counted %s, made %d", month, before)
 	}
 	// A ZIP Google can't route: ZERO_RESULTS is kept, so it isn't asked twice.

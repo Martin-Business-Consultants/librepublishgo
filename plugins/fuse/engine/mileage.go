@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -216,13 +218,12 @@ func rateDescription(tiers []Tier, miles, hours float64) string {
 	if !applies || hours <= 0 {
 		return ""
 	}
+	// rounded == rounded.to_i ? rounded.to_i.to_s : rounded.to_s
 	rounded := rubyRound(max(hours, perHourMinimum), 1)
-	formatted := rubyFloatString(rounded)
-	if rounded == float64(int64(rounded)) {
-		formatted = rubyFloatString(rounded)
-		formatted = strings.TrimSuffix(formatted, ".0")
+	if rounded == math.Trunc(rounded) {
+		return strconv.FormatInt(int64(rounded), 10) + " Hour Route"
 	}
-	return formatted + " Hour Route"
+	return rubyFloatString(rounded) + " Hour Route"
 }
 
 // mileageLabelSuffix is QuoteFeeCalculator#mileage_label_suffix: " (18.9 mi)"

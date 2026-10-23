@@ -3,6 +3,7 @@ package fuse
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
@@ -35,7 +36,7 @@ type quoteRequest struct {
 
 func readQuoteRequest(req *plugin.Request) (quoteRequest, bool) {
 	var q quoteRequest
-	if req.Method == "POST" {
+	if req.Method == http.MethodPost {
 		if len(req.Body) > 0 && json.Unmarshal(req.Body, &q) != nil {
 			return q, false
 		}
@@ -72,7 +73,7 @@ func list(v any, dflt []string) (names []string, all bool) {
 		if x == "" {
 			return []string{}, false
 		}
-		for _, s := range strings.Split(x, ",") {
+		for s := range strings.SplitSeq(x, ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				names = append(names, s)
 			}
@@ -177,40 +178,54 @@ func summarize(p *engine.Preview, catalog []engine.CatalogProduct) *summary {
 	return s
 }
 
+// quoteAnswer is /quote's answer.
+type quoteAnswer struct {
+	RatesVersion  string                  `json:"rates_version"`
+	Zip           string                  `json:"zip"`
+	Dest          string                  `json:"dest"`
+	ProductType   string                  `json:"product_type"`
+	ServiceArea   engine.ServiceArea      `json:"service_area"`
+	LocationPhone string                  `json:"location_phone,omitempty"`
+	OutOfAreaText string                  `json:"out_of_area_text,omitempty"`
+	Labels        map[string]string       `json:"labels"`
+	ServiceOrder  []string                `json:"service_order"`
+	Services      map[string]*serviceView `json:"services"`
+	SaleFrom      *saleFrom               `json:"sale_from,omitempty"`
+	Distance      distanceReport          `json:"distance"`
+	Quoted        *quotedView             `json:"quoted,omitempty"`
+	Token         string                  `json:"token,omitempty"`
+}
+
+type saleFrom struct {
+	ProductID int64 `json:"product_id"`
+	Price     int64 `json:"price"`
+}
+
+// quotedView is what a token said, and whether to believe it.
+type quotedView struct {
+	Valid        bool          `json:"valid"`
+	Reason       string        `json:"reason,omitempty"`
+	Payload      *TokenPayload `json:"payload,omitempty"`
+	RatesChanged *bool         `json:"rates_changed,omitempty"`
+}
+
 // quote is GET|POST /quote: every asked-for service priced for a ZIP (and
 // destination) in one call, from the published rates, and a signed token
 // for the selected one when asked (POST, mint: true). With t, the token's
 // inputs are priced again and its figures checked.
 func (c *call) quote() *plugin.Response {
-	q, ok := c.readQuote()
+	q, ok := readQuoteRequest(c.req.Request)
 	if !ok {
 		return reply(400, map[string]string{"error": "bad_request", "message": "Send the fields as JSON."})
 	}
-	var quoted map[string]any
+	var quoted *quotedView
 	if q.Token != "" {
-		p, err := verifyToken(c.ctx, c.h, q.Token)
-		quoted = map[string]any{"valid": err == nil}
-		if err != nil {
-			quoted["reason"] = err.Error()
-		} else {
-			quoted["payload"] = p
-		}
-		// The token's inputs are priced again whenever it reads; its figures
-		// are only vouched for when it verifies.
-		if !errors.Is(err, errTokenShape) && zip5.MatchString(p.Z) {
-			q.Zip, q.Dest, q.Selected = p.Z, p.DZ, p.ST
-			pt := p.PT
-			q.ProductType = &pt
-			if p.PID > 0 {
-				q.Product, q.Qty = p.PID, p.Q
-			}
-		}
+		quoted = c.readToken(&q)
 	}
-	if !zip5.MatchString(strings.TrimSpace(q.Zip)) {
+	q.Zip, q.Dest = strings.TrimSpace(q.Zip), strings.TrimSpace(q.Dest)
+	if !zip5.MatchString(q.Zip) {
 		return reply(400, map[string]string{"error": "invalid_zip", "message": "zip must be a 5-digit ZIP."})
 	}
-	q.Zip = strings.TrimSpace(q.Zip)
-	q.Dest = strings.TrimSpace(q.Dest)
 	if q.Dest != "" && !zip5.MatchString(q.Dest) {
 		return reply(400, map[string]string{"error": "invalid_dest", "message": "dest must be a 5-digit ZIP, or left out."})
 	}
@@ -223,34 +238,48 @@ func (c *call) quote() *plugin.Response {
 		return reply(409, map[string]string{"error": "no_rates", "message": "No rates are published yet."})
 	}
 	res := c.priceAll(v, q)
-	if quoted != nil {
-		if p, ok := quoted["payload"].(TokenPayload); ok {
-			quoted["rates_changed"] = p.RV != v.active.Version
-		}
-		res["quoted"] = quoted
+	if quoted != nil && quoted.Payload != nil {
+		changed := quoted.Payload.RV != v.active.Version
+		quoted.RatesChanged = &changed
 	}
-	if q.Mint && c.req.Method == "POST" {
-		tok, err := c.mint(v, q, res)
-		if err != "" {
-			return reply(422, map[string]any{"error": "cannot_mint", "message": err})
+	res.Quoted = quoted
+	if q.Mint && c.req.Method == http.MethodPost {
+		tok, why := c.mint(v, q, res)
+		if why != "" {
+			return reply(422, map[string]any{"error": "cannot_mint", "message": why})
 		}
-		res["token"] = tok
+		res.Token = tok
 	}
 	return replyRaw(200, map[string]string{"Content-Type": "application/json; charset=utf-8", "Cache-Control": "private, max-age=60"}, mustJSON(res))
 }
 
-func (c *call) readQuote() (quoteRequest, bool) { return readQuoteRequest(c.req.Request) }
-
-// priceAll prices each service, Google's routes fetched first, together.
-func (c *call) priceAll(v *version, q quoteRequest) map[string]any {
-	x := v.index
-	zips := v.zips(c.ctx, c.h)
-	pt := "portable-storage"
-	if q.ProductType != nil {
-		pt = strings.TrimSpace(*q.ProductType)
+// readToken checks q's token, and makes its inputs q's whenever it reads:
+// a token's inputs are priced again even when its figures can't be
+// trusted.
+func (c *call) readToken(q *quoteRequest) *quotedView {
+	p, err := verifyToken(c.ctx, c.h, q.Token)
+	out := &quotedView{Valid: err == nil}
+	if err != nil {
+		out.Reason = err.Error()
+	} else {
+		out.Payload = &p
 	}
+	if !errors.Is(err, errTokenShape) && zip5.MatchString(p.Z) {
+		q.Zip, q.Dest, q.Selected = p.Z, p.DZ, p.ST
+		pt := p.PT
+		q.ProductType = &pt
+		if p.PID > 0 {
+			q.Product, q.Qty = p.PID, p.Q
+		}
+	}
+	return out
+}
+
+// services are the services q asks for: the named ones, else every one with
+// a product of the type, in name order (Fuse's config order); the selected
+// one always.
+func requestedServices(x *engine.Index, q quoteRequest, pt string, catalog engine.Catalog) []string {
 	services, all := list(q.Services, nil)
-	catalog := x.Catalog(q.Zip, "", zips)
 	if all || q.Services == nil {
 		services = nil
 		for _, st := range catalog.ServiceTypes {
@@ -262,6 +291,43 @@ func (c *call) priceAll(v *version, q quoteRequest) map[string]any {
 	if q.Selected != "" && !slices.Contains(services, q.Selected) {
 		services = append(services, q.Selected)
 	}
+	return services
+}
+
+// planRoutes is every Directions request the services need, once each;
+// skipped says some weren't planned because a ZIP isn't in the table and
+// only ZIPs in it go to Google.
+func planRoutes(x *engine.Index, zips engine.ZipSource, cfg config, zip string, services []string, destOf func(string) string) (keys []engine.RouteKey, skipped bool) {
+	if !x.Book.Settings.MileageBasedPricing && !slices.ContainsFunc(x.Book.Fees, func(f engine.Fee) bool { return f.MileageBasedPricing }) {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	for _, st := range services {
+		dest := destOf(st)
+		if cfg.KnownZipsOnly && (zips.Zip(zip) == nil || dest != "" && zips.Zip(dest) == nil) {
+			skipped = true
+			continue
+		}
+		for _, k := range engine.PlanRoutes(x.Book.Settings, zip, dest) {
+			if !seen[k.String()] {
+				seen[k.String()] = true
+				keys = append(keys, k)
+			}
+		}
+	}
+	return keys, skipped
+}
+
+// priceAll prices each service, Google's routes fetched first, together.
+func (c *call) priceAll(v *version, q quoteRequest) *quoteAnswer {
+	x := v.index
+	zips := v.zips(c.ctx, c.h)
+	pt := "portable-storage"
+	if q.ProductType != nil {
+		pt = strings.TrimSpace(*q.ProductType)
+	}
+	catalog := x.Catalog(q.Zip, "", zips)
+	services := requestedServices(x, q, pt, catalog)
 	destFor, destAll := list(q.DestFor, []string{"move-it"})
 	destOf := func(st string) string {
 		if q.Dest != "" && (destAll || slices.Contains(destFor, st)) {
@@ -270,27 +336,8 @@ func (c *call) priceAll(v *version, q quoteRequest) map[string]any {
 		return ""
 	}
 
-	// Every route any service needs, fetched at once within the budget.
 	cfg := loadConfig(c.ctx, c.h)
-	needsDistance := x.Book.Settings.MileageBasedPricing || slices.ContainsFunc(x.Book.Fees, func(f engine.Fee) bool { return f.MileageBasedPricing })
-	var keys []engine.RouteKey
-	seen := map[string]bool{}
-	skipped := false
-	if needsDistance {
-		for _, st := range services {
-			dest := destOf(st)
-			if cfg.KnownZipsOnly && (zips.Zip(q.Zip) == nil || dest != "" && zips.Zip(dest) == nil) {
-				skipped = true
-				continue
-			}
-			for _, k := range engine.PlanRoutes(x.Book.Settings, q.Zip, dest) {
-				if !seen[k.String()] {
-					seen[k.String()] = true
-					keys = append(keys, k)
-				}
-			}
-		}
-	}
+	keys, skipped := planRoutes(x, zips, cfg, q.Zip, services, destOf)
 	budget := distanceBudget
 	if q.BudgetMS > 0 && time.Duration(q.BudgetMS)*time.Millisecond < budget {
 		budget = max(time.Duration(q.BudgetMS)*time.Millisecond, 100*time.Millisecond)
@@ -303,86 +350,75 @@ func (c *call) priceAll(v *version, q quoteRequest) map[string]any {
 
 	views := map[string]*serviceView{}
 	for _, st := range services {
-		sv := &serviceView{}
-		views[st] = sv
-		ref := x.ServiceTypeBySlug(st)
-		if ref == nil {
-			continue
-		}
-		sv.Name = ref.Name
-		products := x.LoadProducts(pt, st)
-		if len(products) == 0 {
-			continue
-		}
-		sv.Available = true
-		for _, p := range x.Catalog(q.Zip, st, zips).Products {
-			if pt == "" || p.ProductType == pt {
-				sv.Products = append(sv.Products, p)
-			}
-		}
-		params := engine.Params{ServiceType: st, ProductType: pt, ZipCode: q.Zip, DestinationZip: destOf(st)}
-		if st == q.Selected {
-			switch {
-			case len(q.Quantities) > 0:
-				params.Quantities = q.Quantities
-			case q.Product > 0:
-				params.Quantities = map[string]any{strconv.FormatInt(q.Product, 10): float64(max(q.Qty, 1))}
-			}
-		}
-		pv, err := x.Preview(params, zips, dirs)
-		if err != nil {
-			sv.Error = err.Error()
-			continue
-		}
-		sv.Dest = params.DestinationZip
-		sv.Preview = pv
-		if len(pv.Products) > 0 {
-			sv.ProductID = pv.Products[0].ID
-		}
-		sv.Summary = summarize(pv, sv.Products)
+		views[st] = c.priceService(x, zips, q, st, pt, destOf(st), dirs)
 	}
-
 	sa, _ := x.ServiceAreaFor(q.Zip, zips)
-	out := map[string]any{
-		"rates_version": v.active.Version,
-		"zip":           q.Zip,
-		"dest":          q.Dest,
-		"product_type":  pt,
-		"service_area":  sa,
-		"services":      views,
-		"service_order": services,
-		"distance":      rep,
-		"labels":        map[string]string{"total": strOr(x.Book.Settings.TotalPriceLabel, "Total")},
+	out := &quoteAnswer{
+		RatesVersion: v.active.Version, Zip: q.Zip, Dest: q.Dest, ProductType: pt, ServiceArea: sa,
+		LocationPhone: catalog.LocationPhone, Labels: map[string]string{"total": strOr(x.Book.Settings.TotalPriceLabel, "Total")},
+		ServiceOrder: services, Services: views, Distance: rep,
 	}
-	if catalog.LocationPhone != "" {
-		out["location_phone"] = catalog.LocationPhone
-	}
-	if zips.Zip(q.Zip) == nil && x.Book.Settings.OutOfAreaZipText != "" {
-		out["out_of_area_text"] = x.Book.Settings.OutOfAreaZipText
+	if zips.Zip(q.Zip) == nil {
+		out.OutOfAreaText = x.Book.Settings.OutOfAreaZipText
 	}
 	// The cheapest priced unit for sale of the product type: "Starting at".
-	var saleFrom map[string]any
 	for _, p := range catalog.Products {
-		if p.ForSale && p.Price != nil && *p.Price > 0 && (pt == "" || p.ProductType == pt) &&
-			(saleFrom == nil || *p.Price < saleFrom["price"].(int64)) {
-			saleFrom = map[string]any{"product_id": p.ID, "price": *p.Price}
+		if p.ForSale && p.Price != nil && *p.Price > 0 && (pt == "" || p.ProductType == pt) && (out.SaleFrom == nil || *p.Price < out.SaleFrom.Price) {
+			out.SaleFrom = &saleFrom{p.ID, *p.Price}
 		}
-	}
-	if saleFrom != nil {
-		out["sale_from"] = saleFrom
 	}
 	return out
 }
 
-// mint signs the selected service's figures; "" for the token means why not.
-func (c *call) mint(v *version, q quoteRequest, res map[string]any) (string, string) {
-	views := res["services"].(map[string]*serviceView)
-	sv := views[q.Selected]
+// priceService is one service of a quote: its catalog, its preview (Fuse's
+// /preview) and the summary.
+func (c *call) priceService(x *engine.Index, zips engine.ZipSource, q quoteRequest, st, pt, dest string, dirs engine.Directions) *serviceView {
+	sv := &serviceView{}
+	ref := x.ServiceTypeBySlug(st)
+	if ref == nil {
+		return sv
+	}
+	sv.Name = ref.Name
+	if len(x.LoadProducts(pt, st)) == 0 {
+		return sv
+	}
+	sv.Available = true
+	for _, p := range x.Catalog(q.Zip, st, zips).Products {
+		if pt == "" || p.ProductType == pt {
+			sv.Products = append(sv.Products, p)
+		}
+	}
+	params := engine.Params{ServiceType: st, ProductType: pt, ZipCode: q.Zip, DestinationZip: dest}
+	if st == q.Selected {
+		switch {
+		case len(q.Quantities) > 0:
+			params.Quantities = q.Quantities
+		case q.Product > 0:
+			params.Quantities = map[string]any{strconv.FormatInt(q.Product, 10): float64(max(q.Qty, 1))}
+		}
+	}
+	pv, err := x.Preview(params, zips, dirs)
+	if err != nil {
+		sv.Error = err.Error()
+		return sv
+	}
+	sv.Dest, sv.Preview = dest, pv
+	if len(pv.Products) > 0 {
+		sv.ProductID = pv.Products[0].ID
+	}
+	sv.Summary = summarize(pv, sv.Products)
+	return sv
+}
+
+// mint signs the selected service's figures; the second answer, when not
+// "", is why it can't.
+func (c *call) mint(v *version, q quoteRequest, res *quoteAnswer) (string, string) {
+	sv := res.Services[q.Selected]
 	if q.Selected == "" || sv == nil || !sv.Available || sv.Preview == nil {
 		return "", "selected must name a service that has a price for this ZIP"
 	}
 	p := TokenPayload{
-		Iat: now().Unix(), RV: v.active.Version, PT: res["product_type"].(string), ST: q.Selected,
+		Iat: now().Unix(), RV: v.active.Version, PT: res.ProductType, ST: q.Selected,
 		Z: q.Zip, DZ: sv.Dest, FN: firstName(q.Name),
 	}
 	pv := sv.Preview
@@ -390,7 +426,7 @@ func (c *call) mint(v *version, q quoteRequest, res map[string]any) (string, str
 		p.PID, p.Q = pv.Products[0].ID, pv.Products[0].Quantity
 	}
 	figs := TokenFigs{Products: []TokenProduct{}, Fees: []TokenFee{}, Sub: pv.Subtotal, FT: pv.FeesTotal, TD: pv.TotalDiscount, Tot: pv.Total,
-		Dist: res["distance"].(distanceReport).Status}
+		Dist: res.Distance.Status}
 	for _, pr := range pv.Products {
 		figs.Products = append(figs.Products, TokenProduct{pr.Name, pr.Quantity, pr.OriginalPrice, pr.Subtotal})
 	}

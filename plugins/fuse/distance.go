@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -187,8 +188,7 @@ func fetchRoutes(ctx context.Context, h host, cfg config, keys []engine.RouteKey
 		key := h.Reveal(cfg.GoogleKey)
 		month := "stats:google:" + t.UTC().Format("200601")
 		used, _, _ := h.KVGet(ctx, month)
-		var n int64
-		fmt.Sscan(used, &n)
+		n, _ := strconv.ParseInt(used, 10, 64)
 		switch {
 		case key == "":
 			rep.Failed += len(missing)

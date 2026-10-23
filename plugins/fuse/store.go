@@ -261,7 +261,9 @@ func loadActive(ctx context.Context, h host) (*version, error) {
 func loadVersion(ctx context.Context, h host, a Active) (*version, error) {
 	ck := versionKey(ctx, h, a.Version)
 	if v, ok := versions.Load(ck); ok {
-		return v.(*version), nil
+		if loaded, ok := v.(*version); ok {
+			return loaded, nil
+		}
 	}
 	var core engine.Book
 	ok, err := getBlob(ctx, h, "rates:v:"+a.Version+":core", &core)
@@ -276,8 +278,12 @@ func loadVersion(ctx context.Context, h host, a Active) (*version, error) {
 	if v.index, err = engine.NewIndex(&core); err != nil {
 		return nil, err
 	}
-	actual, _ := versions.LoadOrStore(ck, v)
-	return actual.(*version), nil
+	if actual, loaded := versions.LoadOrStore(ck, v); loaded {
+		if other, ok := actual.(*version); ok {
+			return other, nil
+		}
+	}
+	return v, nil
 }
 
 // shard is the ZIPs under a 3-digit prefix.
@@ -368,10 +374,10 @@ func publish(ctx context.Context, h host, by string) (*Active, error) {
 		return nil, err
 	}
 	if errs := engine.Validate(draft); len(errs) > 0 {
-		return nil, &invalidBook{errs}
+		return nil, &invalidBookError{errs}
 	}
 	if _, err := engine.NewIndex(draft); err != nil {
-		return nil, &invalidBook{map[string][]string{"book": {err.Error()}}}
+		return nil, &invalidBookError{map[string][]string{"book": {err.Error()}}}
 	}
 	ver := newVersionID()
 	core := *draft
@@ -458,9 +464,9 @@ func newVersionID() string {
 // now is the clock, a variable for the tests.
 var now = time.Now
 
-type invalidBook struct{ errs map[string][]string }
+type invalidBookError struct{ errs map[string][]string }
 
-func (e *invalidBook) Error() string {
+func (e *invalidBookError) Error() string {
 	var parts []string
 	for k, v := range e.errs {
 		parts = append(parts, k+": "+strings.Join(v, ", "))

@@ -48,7 +48,7 @@ func (c *call) overview() *plugin.Response {
 		}
 		if b, _, err := loadDraft(c.ctx, c.h); err == nil {
 			if errs := engine.Validate(b); len(errs) > 0 {
-				draft = append(draft, map[string]any{"label": "Before it can be published", "value": (&invalidBook{errs}).Error(), "tone": "danger", "multiline": true})
+				draft = append(draft, map[string]any{"label": "Before it can be published", "value": (&invalidBookError{errs}).Error(), "tone": "danger", "multiline": true})
 			}
 			cts := counts(b)
 			draft = append(draft, item("Counts", fmt.Sprintf("%d products, %d fees, %d ZIPs, %d zones, %d discounts", cts["products"], cts["fees"], cts["zips"], cts["zones"], cts["discounts"])))
@@ -71,8 +71,7 @@ func (c *call) publish() *plugin.Response {
 		return reply(409, map[string]string{"error": "no_draft", "message": "There's no draft to publish: edit or import first."})
 	}
 	a, err := publish(c.ctx, c.h, c.actor())
-	var bad *invalidBook
-	if errors.As(err, &bad) {
+	if bad, ok := errors.AsType[*invalidBookError](err); ok {
 		return reply(422, map[string]any{"error": "invalid", "message": bad.Error(), "errors": bad.errs})
 	}
 	if err != nil {
@@ -288,19 +287,20 @@ func (c *call) zips() *plugin.Response {
 	zs := slices.Clone(b.ZipCodes)
 	slices.SortFunc(zs, func(a, c engine.ZipCode) int { return strings.Compare(a.PostalCode, c.PostalCode) })
 	rows := []map[string]any{}
-	next := ""
+	next, last := "", ""
 	for _, z := range zs {
 		if z.PostalCode <= after || q != "" && !strings.HasPrefix(z.PostalCode, q) || zone != "" && zoneName(b, z.ZoneID) != zone {
 			continue
 		}
 		if len(rows) == zipsPage {
-			next = rows[len(rows)-1]["postal_code"].(string)
+			next = last
 			break
 		}
+		last = z.PostalCode
 		rows = append(rows, map[string]any{"id": z.ID, "postal_code": z.PostalCode, "zone": zoneName(b, z.ZoneID), "location": locationName(b, z.LocationID),
 			"fee": feeLabel(b, z.FeeID), "discount": discountName(b, z.DiscountID)})
 	}
-	zones := []map[string]string{}
+	zones := []map[string]string{{"value": "", "label": "All zones"}}
 	for _, z := range b.Zones {
 		zones = append(zones, map[string]string{"value": z.Name, "label": z.Name})
 	}
@@ -329,7 +329,7 @@ func (c *call) zipsBulkForm() *plugin.Response {
 
 // saveZipsBulk takes CSV lines "zip,zone,location[,fee id][,discount]":
 // merge adds and updates, replace_all makes the table exactly these.
-func (c *call) saveZipsBulk() *plugin.Response {
+func (c *call) saveZipsBulk() *plugin.Response { //nolint:gocyclo // a line read, then each column checked in turn
 	var body struct {
 		Bulk map[string]any `json:"bulk"`
 	}
@@ -467,7 +467,7 @@ func (c *call) readImport() (importBody, *engine.Bundle, *engine.Book, *plugin.R
 		return body, nil, nil, invalid(map[string][]string{"bundle": {err.Error()}})
 	}
 	if errs := engine.Validate(book); len(errs) > 0 {
-		return body, nil, nil, invalid(map[string][]string{"bundle": {(&invalidBook{errs}).Error()}})
+		return body, nil, nil, invalid(map[string][]string{"bundle": {(&invalidBookError{errs}).Error()}})
 	}
 	return body, bun, book, nil
 }
@@ -483,9 +483,7 @@ func (c *call) checkBundle() *plugin.Response {
 		return reply(503, map[string]string{"error": "draft_unreadable", "message": err.Error()})
 	}
 	items := []map[string]any{item("Tenant", bun.Tenant), item("Exported", bun.ExportedAt), item("Fuse schema", bun.FuseSchemaVersion)}
-	for _, d := range diffBooks(cur, book) {
-		items = append(items, d)
-	}
+	items = append(items, diffBooks(cur, book)...)
 	return reply(200, map[string]any{"result": map[string]any{"title": "Importing would change the draft like this", "items": items}})
 }
 
@@ -766,7 +764,7 @@ func (c *call) testToken() *plugin.Response {
 		verdict = map[string]any{"label": "Signature", "value": "Not genuine — " + err.Error() + ". Don't rely on its figures.", "tone": "danger"}
 	}
 	items := []map[string]any{verdict,
-		map[string]any{"label": "Priced", "value": time.Unix(p.Iat, 0).UTC().Format(time.RFC3339), "time": true},
+		{"label": "Priced", "value": time.Unix(p.Iat, 0).UTC().Format(time.RFC3339), "time": true},
 		item("Rates version", p.RV), item("Service", p.ST+" · "+p.PT), item("ZIP", strings.TrimSpace(p.Z+" → "+p.DZ)), item("Name", p.FN),
 	}
 	var lines []string

@@ -10,7 +10,7 @@ import (
 // validations (discount.rb, fee.rb, zip_code.rb, product.rb, …) and every
 // link resolving. Errors are keyed by where they are ("fees[3].tiers",
 // "zip_codes[12].postal_code").
-func Validate(b *Book) map[string][]string {
+func Validate(b *Book) map[string][]string { //nolint:gocyclo // one table after another, each check simple
 	errs := map[string][]string{}
 	add := func(at, msg string) { errs[at] = append(errs[at], msg) }
 	name := func(at, n string) {

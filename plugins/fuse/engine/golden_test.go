@@ -42,8 +42,9 @@ type golden struct {
 	} `json:"service_areas"`
 }
 
-func loadAustin(t testing.TB) (*Book, map[string]FixtureRoute, golden) {
-	t.Helper()
+func loadAustin(tb testing.TB) (*Book, map[string]FixtureRoute, golden) {
+	tb.Helper()
+	t := tb
 	raw, err := os.ReadFile("../testdata/austin/rates.json")
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +80,7 @@ func loadAustin(t testing.TB) (*Book, map[string]FixtureRoute, golden) {
 // replay answers Directions from the recording; a route Fuse never asked
 // for fails the test.
 func replay(t *testing.T, routes map[string]FixtureRoute, down bool) Directions {
+	t.Helper()
 	return func(k RouteKey) *Route {
 		if down {
 			return nil

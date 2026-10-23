@@ -236,6 +236,8 @@ put back (though it can be installed again from Available). Today that's
 The engines map onto this contract like this:
 
 - **Forms**: done, as the first default plugin (`plugins/forms`).
+- **Fuse pricing**: done, as `plugins/fuse` ([docs/fuse.md](fuse.md)): built in, not a
+  default; installed on the sites that quote.
 - **Commerce (quotes and invoices)**: a public `POST /quote` route, quotes and
   invoices in storage, and admin screens. Sending an invoice uses `Mail`.
 - **Leads, AI, Market**: these need `content:read`, storage and `http` to
