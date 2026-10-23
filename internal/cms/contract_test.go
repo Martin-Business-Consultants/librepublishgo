@@ -225,7 +225,7 @@ func recordPlugins(t *testing.T, s *site) map[string]exchange {
 		return r
 	}
 	list := call("plugins/plugins.json", "GET", "/api/plugins", nil, 200)
-	if dig(list.Body, "plugins", 0, "key") != "forms" || dig(list.Body, "available", 0, "key") != "visits" {
+	if dig(list.Body, "plugins", 0, "key") != "forms" || !slices.ContainsFunc(list.Body["available"].([]any), func(m any) bool { return dig(m, "key") == "visits" }) {
 		t.Fatalf("plugins: %s", list.Raw)
 	}
 	call("plugins/plugin-forms.json", "GET", "/api/plugins/forms", nil, 200)

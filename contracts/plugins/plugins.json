@@ -1,6 +1,22 @@
 {
   "available": [
     {
+      "description": "Prices quotes as Fuse does, from a rate book kept here: products, fees, discounts, zones, ZIPs and mileage (Google distances). Nothing about a quote is stored.",
+      "key": "fuse",
+      "name": "Fuse pricing",
+      "requested": {
+        "content:read": false,
+        "http": [
+          "maps.googleapis.com"
+        ],
+        "mail": false,
+        "media:write": true,
+        "site:read": false,
+        "storage": true
+      },
+      "version": "1.0.0"
+    },
+    {
       "description": "Counts the page views a site reports, and when each page was last published.",
       "key": "visits",
       "name": "Visits",
