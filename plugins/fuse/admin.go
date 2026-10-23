@@ -760,7 +760,10 @@ func (c *call) testToken() *plugin.Response {
 		return invalid(map[string][]string{"token": {err.Error()}})
 	}
 	verdict := map[string]any{"label": "Signature", "value": "Genuine: these are the figures this site quoted.", "tone": "ok"}
-	if err != nil {
+	switch {
+	case errors.Is(err, errTokenExpired):
+		verdict = map[string]any{"label": "Signature", "value": "Genuine, but expired: valid until " + p.VU + ". /quote won't price it.", "tone": "danger"}
+	case err != nil:
 		verdict = map[string]any{"label": "Signature", "value": "Not genuine — " + err.Error() + ". Don't rely on its figures.", "tone": "danger"}
 	}
 	items := []map[string]any{verdict,

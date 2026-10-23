@@ -361,17 +361,12 @@ func TestQuoteToken(t *testing.T) {
 	if q["valid"] != true || q["rates_changed"] != false || v["zip"] != "78701" || v["dest"] != "78626" {
 		t.Fatalf("verify: %v", v)
 	}
-	// Changing a figure breaks the signature; the inputs are still priced.
+	// Changing a figure breaks the signature: nothing is priced.
 	parts := strings.Split(tok, ".")
 	p.Fig.Tot = 1
 	forged, _ := json.Marshal(p)
 	bad := "v1." + b64(forged) + "." + parts[2]
-	v = must(t, 200)(do(t, h, (*call).quote, "GET", "/quote?t="+url.QueryEscape(bad), nil, nil))
-	if q := v["quoted"].(map[string]any); q["valid"] != false || q["payload"] != nil || v["zip"] != "78701" {
-		t.Fatalf("forged: %v", v)
-	}
-	// Garbage is not a token; with no zip of its own it's a bad request.
-	must(t, 400)(do(t, h, (*call).quote, "GET", "/quote?t=nope", nil, nil))
+	invalidToken(t, h, bad, "bad_signature")
 	// Rotating keeps old links verifying; new ones use the new key.
 	must(t, 200)(do(t, h, (*call).rotateToken, "POST", "/admin/token/rotate", nil, admin))
 	if _, err := verifyToken(t.Context(), h, tok); err != nil {
@@ -396,6 +391,109 @@ func TestQuoteToken(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(r), "Not genuine") {
 		t.Fatalf("checker on a forgery: %v", r)
 	}
+}
+
+// invalidToken asks /quote for t, as a GET and as a POST with inputs of
+// its own, and wants 422 invalid_token for reason: no prices, nothing the
+// token carried, the caller's own inputs not priced either.
+func invalidToken(t *testing.T, h *fakeHost, tok, reason string) {
+	t.Helper()
+	for _, r := range []map[string]any{
+		must(t, 422)(do(t, h, (*call).quote, "GET", "/quote?services=move-it&t="+url.QueryEscape(tok), nil, nil)),
+		must(t, 422)(do(t, h, (*call).quote, "POST", "/quote", map[string]any{"t": tok, "zip": "78701", "selected": "move-it", "mint": true}, nil)),
+	} {
+		raw, _ := json.Marshal(r)
+		if r["error"] != "invalid_token" || r["reason"] != reason || len(r) != 3 || r["message"] == "" ||
+			strings.Contains(string(raw), "Karen") || strings.Contains(string(raw), "78626") {
+			t.Fatalf("%s: %s", reason, raw)
+		}
+	}
+}
+
+// Every token /quote can't trust is refused the same way, by reason.
+func TestQuoteTokenRefused(t *testing.T) {
+	t.Parallel()
+	h := published(t)
+	tok := quoteFor(t, h, map[string]any{"zip_code": "78701", "destination_zip_code": "78626", "service_type": "move-it", "product_type": "portable-storage"},
+		map[string]any{"mint": true, "name": "Karen"})["token"].(string)
+	p, _, _, _ := decodeToken(tok)
+	parts := strings.Split(tok, ".")
+
+	// Tampered: an input changed, the old signature kept.
+	tampered := p
+	tampered.Z = "78702"
+	body, _ := json.Marshal(tampered)
+	invalidToken(t, h, "v1."+b64(body)+"."+parts[2], "bad_signature")
+	// The signature itself changed.
+	sig, _ := base64.RawURLEncoding.DecodeString(parts[2])
+	sig[0] ^= 1
+	invalidToken(t, h, parts[0]+"."+parts[1]+"."+b64(sig), "bad_signature")
+
+	// Signed properly, but with a key this site never had.
+	stranger := p
+	stranger.Kid = "k9"
+	body, _ = json.Marshal(stranger)
+	signed := "v1." + b64(body)
+	invalidToken(t, h, signed+"."+b64(mac(make([]byte, 32), signed)), "unknown_key")
+
+	// Not a token at all: never invalid_zip, though no zip was sent.
+	for _, bad := range []string{"nope", "v1.not-a-token.xx", "v2." + parts[1] + "." + parts[2], parts[0] + "." + parts[1],
+		"v1." + b64([]byte("{not json")) + "." + parts[2], strings.Repeat("v1.", 3000)} {
+		invalidToken(t, h, bad, "malformed")
+	}
+	// Genuine, but saying no ZIP (no site mints one): malformed too.
+	_, key, _ := signingKey(t.Context(), h)
+	noZip := p
+	noZip.Z = ""
+	body, _ = json.Marshal(noZip)
+	signed = "v1." + b64(body)
+	invalidToken(t, h, signed+"."+b64(mac(key, signed)), "malformed")
+
+	// The genuine one is still priced.
+	v := must(t, 200)(do(t, h, (*call).quote, "GET", "/quote?services=move-it&t="+url.QueryEscape(tok), nil, nil))
+	if v["quoted"].(map[string]any)["valid"] != true || v["services"].(map[string]any)["move-it"].(map[string]any)["preview"] == nil {
+		t.Fatalf("genuine: %v", v)
+	}
+}
+
+// A token holds through its vu day (quote_validity_days after it was
+// priced, UTC) and is refused the day after; the admin's checker still
+// reads it. Not parallel: it moves the package clock.
+func TestQuoteTokenExpiry(t *testing.T) {
+	h := published(t)
+	t.Cleanup(func() { now = time.Now })
+	minted := time.Date(2026, 10, 23, 23, 30, 0, 0, time.FixedZone("CDT", -5*3600)) // already the 24th in UTC
+	at := func(d time.Time) { now = func() time.Time { return d } }
+	at(minted)
+	tok := quoteFor(t, h, map[string]any{"zip_code": "78701", "service_type": "keep-it", "product_type": "portable-storage"},
+		map[string]any{"mint": true, "name": "Karen"})["token"].(string)
+	if p, _, _, _ := decodeToken(tok); p.VU != "2026-11-23" {
+		t.Fatalf("vu %q, want 30 days on from the 24th UTC", p.VU)
+	}
+	for _, d := range []time.Time{minted, time.Date(2026, 11, 23, 23, 59, 59, 0, time.UTC)} {
+		at(d)
+		v := must(t, 200)(do(t, h, (*call).quote, "GET", "/quote?t="+url.QueryEscape(tok), nil, nil))
+		if v["quoted"].(map[string]any)["valid"] != true || v["services"].(map[string]any)["keep-it"].(map[string]any)["preview"] == nil {
+			t.Fatalf("on %s: %v", d, v)
+		}
+	}
+	at(time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC))
+	if _, err := verifyToken(t.Context(), h, tok); !errors.Is(err, errTokenExpired) {
+		t.Fatalf("verify after vu: %v", err)
+	}
+	invalidToken(t, h, tok, "expired")
+	r := must(t, 200)(do(t, h, (*call).testToken, "POST", "/admin/test/token", map[string]any{"test": map[string]any{"token": tok}}, admin))
+	if s := fmt.Sprint(r); !strings.Contains(s, "expired") || !strings.Contains(s, "2026-11-23") {
+		t.Fatalf("checker on an expired token: %v", r)
+	}
+	// A book with no quote_validity_days writes no vu: such a token never expires.
+	at(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	p, _, _, _ := decodeToken(tok)
+	p.VU = ""
+	_, key, _ := signingKey(t.Context(), h)
+	body, _ := json.Marshal(p)
+	signed := "v1." + b64(body)
+	must(t, 200)(do(t, h, (*call).quote, "GET", "/quote?t="+url.QueryEscape(signed+"."+b64(mac(key, signed))), nil, nil))
 }
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

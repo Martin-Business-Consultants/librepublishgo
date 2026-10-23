@@ -2,7 +2,6 @@ package fuse
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"regexp"
 	"slices"
@@ -201,18 +200,19 @@ type saleFrom struct {
 	Price     int64 `json:"price"`
 }
 
-// quotedView is what a token said, and whether to believe it.
+// quotedView is what a trusted token said: valid is always true, since a
+// token that can't be trusted is answered 422 invalid_token instead.
 type quotedView struct {
 	Valid        bool          `json:"valid"`
-	Reason       string        `json:"reason,omitempty"`
 	Payload      *TokenPayload `json:"payload,omitempty"`
 	RatesChanged *bool         `json:"rates_changed,omitempty"`
 }
 
 // quote is GET|POST /quote: every asked-for service priced for a ZIP (and
 // destination) in one call, from the published rates, and a signed token
-// for the selected one when asked (POST, mint: true). With t, the token's
-// inputs are priced again and its figures checked.
+// for the selected one when asked (POST, mint: true). With t, the token is
+// checked first: a genuine, unexpired one has its inputs priced again;
+// any other is 422 invalid_token, nothing priced and nothing of it echoed.
 func (c *call) quote() *plugin.Response {
 	q, ok := readQuoteRequest(c.req.Request)
 	if !ok {
@@ -220,7 +220,10 @@ func (c *call) quote() *plugin.Response {
 	}
 	var quoted *quotedView
 	if q.Token != "" {
-		quoted = c.readToken(&q)
+		var reason string
+		if quoted, reason = c.readToken(&q); reason != "" {
+			return reply(422, map[string]string{"error": "invalid_token", "reason": reason, "message": tokenMessages[reason]})
+		}
 	}
 	q.Zip, q.Dest = strings.TrimSpace(q.Zip), strings.TrimSpace(q.Dest)
 	if !zip5.MatchString(q.Zip) {
@@ -253,26 +256,33 @@ func (c *call) quote() *plugin.Response {
 	return replyRaw(200, map[string]string{"Content-Type": "application/json; charset=utf-8", "Cache-Control": "private, max-age=60"}, mustJSON(res))
 }
 
-// readToken checks q's token, and makes its inputs q's whenever it reads:
-// a token's inputs are priced again even when its figures can't be
-// trusted.
-func (c *call) readToken(q *quoteRequest) *quotedView {
+// tokenMessages say each invalid_token reason in words. None repeats
+// anything the token carried.
+var tokenMessages = map[string]string{
+	"malformed":     "t isn't a quote token.",
+	"unknown_key":   "The token was signed with a key this site doesn't have.",
+	"bad_signature": "The token's signature doesn't match: it was changed.",
+	"expired":       "The quote has passed its valid-until date.",
+}
+
+// readToken checks q's token and, only when it can be trusted, makes its
+// inputs q's; otherwise the second answer is why not (tokenReason) and q
+// is left as it was.
+func (c *call) readToken(q *quoteRequest) (*quotedView, string) {
 	p, err := verifyToken(c.ctx, c.h, q.Token)
-	out := &quotedView{Valid: err == nil}
+	if err == nil && !zip5.MatchString(p.Z) {
+		err = errTokenShape
+	}
 	if err != nil {
-		out.Reason = err.Error()
-	} else {
-		out.Payload = &p
+		return nil, tokenReason(err)
 	}
-	if !errors.Is(err, errTokenShape) && zip5.MatchString(p.Z) {
-		q.Zip, q.Dest, q.Selected = p.Z, p.DZ, p.ST
-		pt := p.PT
-		q.ProductType = &pt
-		if p.PID > 0 {
-			q.Product, q.Qty = p.PID, p.Q
-		}
+	q.Zip, q.Dest, q.Selected = p.Z, p.DZ, p.ST
+	pt := p.PT
+	q.ProductType = &pt
+	if p.PID > 0 {
+		q.Product, q.Qty = p.PID, p.Q
 	}
-	return out
+	return &quotedView{Valid: true, Payload: &p}, ""
 }
 
 // services are the services q asks for: the named ones, else every one with
@@ -441,7 +451,7 @@ func (c *call) mint(v *version, q quoteRequest, res *quoteAnswer) (string, strin
 	}
 	p.Fig = figs
 	if d := v.index.Book.Settings.QuoteValidityDays; d != nil && *d > 0 {
-		p.VU = now().AddDate(0, 0, *d).Format(time.DateOnly)
+		p.VU = now().UTC().AddDate(0, 0, *d).Format(time.DateOnly)
 	}
 	tok, err := mintToken(c.ctx, c.h, p)
 	if err != nil {

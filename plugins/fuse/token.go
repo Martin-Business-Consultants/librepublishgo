@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // A quote token is a quote with nothing stored: the inputs and the figures
@@ -143,10 +144,28 @@ func mintToken(ctx context.Context, h host, p TokenPayload) (string, error) {
 }
 
 var (
-	errTokenShape = errors.New("not a quote token")
-	errTokenKey   = errors.New("signed with a key this site doesn't have")
-	errTokenMAC   = errors.New("the signature doesn't match: the token was changed")
+	errTokenShape   = errors.New("not a quote token")
+	errTokenKey     = errors.New("signed with a key this site doesn't have")
+	errTokenMAC     = errors.New("the signature doesn't match: the token was changed")
+	errTokenExpired = errors.New("the quote's valid-until date has passed")
 )
+
+// tokenReason is why a token can't be trusted, as /quote answers it.
+func tokenReason(err error) string {
+	switch {
+	case errors.Is(err, errTokenKey):
+		return "unknown_key"
+	case errors.Is(err, errTokenMAC):
+		return "bad_signature"
+	case errors.Is(err, errTokenExpired):
+		return "expired"
+	}
+	return "malformed"
+}
+
+// tokenToday is the date a token's vu is held to. A plugin isn't told the
+// site's time zone, so it's UTC's, the same calendar vu is written in.
+func tokenToday() string { return now().UTC().Format(time.DateOnly) }
 
 // decodeToken reads a token's payload without checking it (the figures
 // can't be trusted until verifyToken says so).
@@ -174,9 +193,10 @@ func decodeToken(t string) (TokenPayload, string, []byte, error) {
 	return p, signed, mac, nil
 }
 
-// verifyToken checks a token's signature, by its key id; the payload comes
-// back either way when it reads (for re-pricing from its inputs), with the
-// error saying why it can't be trusted.
+// verifyToken checks a token's signature, by its key id, then its
+// valid-until date (vu, when set: the quote holds through that day). The
+// payload comes back either way when it reads, for the admin's checker,
+// with the error saying why it can't be trusted.
 func verifyToken(ctx context.Context, h host, t string) (TokenPayload, error) {
 	p, signed, got, err := decodeToken(t)
 	if err != nil {
@@ -193,6 +213,14 @@ func verifyToken(ctx context.Context, h host, t string) (TokenPayload, error) {
 	}
 	if !hmac.Equal(got, mac(key, signed)) {
 		return p, errTokenMAC
+	}
+	if p.VU != "" {
+		if _, err := time.Parse(time.DateOnly, p.VU); err != nil {
+			return p, errTokenShape
+		}
+		if p.VU < tokenToday() {
+			return p, errTokenExpired
+		}
 	}
 	return p, nil
 }

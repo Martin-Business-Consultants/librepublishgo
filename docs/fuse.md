@@ -115,7 +115,7 @@ All are under `/api/x/fuse`. Amounts are in cents.
 | `quantities` | POST only: `{"<product id>": n}` for the selected service, as Fuse takes them |
 | `mint` | POST only: `true` answers a `token` for the selected service |
 | `name` | its first word goes in the token |
-| `t` | a token: its inputs are priced again, and `quoted` says whether it's genuine |
+| `t` | a token: when it's genuine and unexpired, its inputs are priced again (they replace the request's own) and `quoted` carries it; otherwise `422 invalid_token` (see [Quote tokens](#quote-tokens)) |
 | `budget_ms` | at most this long for Google (≤ 4000) |
 
 The answer:
@@ -142,7 +142,7 @@ The answer:
   },
   "sale_from": {"product_id": 21, "price": 300000},   // the cheapest priced unit for sale, when there is one
   "distance": {"status": "ok", "mode": "google", "routes": 3, "live": 3, "ms": 412},
-  "quoted": {"valid": true, "payload": {…}, "rates_changed": false},   // with t
+  "quoted": {"valid": true, "payload": {…}, "rates_changed": false},   // with a token it trusts
   "token": "v1.…"                                                      // POST with mint
 }
 ```
@@ -154,8 +154,9 @@ for what to show. `summary` does the arithmetic every thank-you page
 repeats; `due` equals `preview.total`.
 
 Errors: `400 invalid_zip` and `400 invalid_dest`, `409 no_rates` (nothing
-published), and `422 cannot_mint` (mint without a priced `selected`
-service).
+published), `422 cannot_mint` (mint without a priced `selected`
+service), and `422 invalid_token` (a `t` it can't trust; checked before
+anything else, so never answered as `invalid_zip`).
 
 ### `GET /service-area?zip=`
 
@@ -193,6 +194,40 @@ link a customer reads out is genuine.
 The key is 32 random bytes, sealed in storage, made on the first mint.
 **Rotate token key** signs new tokens with a new key; links signed with an
 old key still verify.
+
+When the published book sets `quote_validity_days`, the token carries
+`vu`, the last day the quote holds (`YYYY-MM-DD`): the day it was priced
+plus that many days, in UTC. The plugin isn't told the site's time zone,
+so UTC is the calendar both for writing `vu` and for checking it. A token
+with no `vu` doesn't expire.
+
+`/quote?t=` prices a token only when it can trust it: the signature
+holds, under a key this site has, and today (UTC) is no later than `vu`.
+Any other token is answered, before anything is priced and whatever else
+the request sends,
+
+```jsonc
+// 422
+{"error": "invalid_token", "reason": "bad_signature", "message": "The token's signature doesn't match: it was changed."}
+```
+
+with `reason` one of
+
+| `reason` | when |
+| --- | --- |
+| `malformed` | it doesn't decode as a `v1.` token (or says no ZIP) |
+| `unknown_key` | it names a key id this site doesn't have |
+| `bad_signature` | the signature doesn't match: the payload or the signature was changed |
+| `expired` | genuine, but `vu` has passed |
+
+No `services`, no `quoted`, nothing the token carried (not its first
+name, not its ZIPs) comes back. A token that is trusted comes back as
+`quoted: {"valid": true, "payload": …, "rates_changed": …}`; a page that
+shows a token's figures or name should still check `quoted.valid` before
+showing anything from it, and a page that decodes a token itself, without
+the CMS, has no signature check: it must treat what it reads as
+unverified. **Price tester › Check a token** still reads an expired or
+forged token for staff, and says which it is.
 
 ## Where it isn't Fuse
 

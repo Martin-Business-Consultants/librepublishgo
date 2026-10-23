@@ -70,6 +70,18 @@ func TestFusePricing(t *testing.T) {
 	if dig(r.Body, "quoted", "valid") != true || dig(r.Body, "quoted", "payload", "fig", "tot") != float64(84554) {
 		t.Fatalf("verify: %s", r.Raw)
 	}
+	// One it can't trust is refused through the host too: 422, no prices.
+	i := strings.LastIndexByte(tok, '.')
+	sig := []byte(tok[i+1:])
+	sig[0] ^= 1
+	r = s.must(422, s.do("", "GET", "/api/x/fuse/quote?t="+url.QueryEscape(tok[:i+1]+string(sig)), nil))
+	if str(r.Body["error"]) != "invalid_token" || r.Body["services"] != nil || strings.Contains(string(r.Raw), "Karen") {
+		t.Fatalf("tampered: %s", r.Raw)
+	}
+	r = s.must(422, s.do("", "GET", "/api/x/fuse/quote?t=v1.not-a-token.xx", nil))
+	if str(r.Body["reason"]) != "malformed" {
+		t.Fatalf("malformed: %s", r.Raw)
+	}
 
 	// Anonymous callers are held to 30 calls a minute; the site's token isn't.
 	limited := false
