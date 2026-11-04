@@ -9,6 +9,7 @@
   import TiptapEditor from "../components/TiptapEditor.svelte";
   import LinkField from "./LinkField.svelte";
   import AssetField from "./AssetField.svelte";
+  import JsonField from "./JsonField.svelte";
   import RecordField from "./RecordField.svelte";
   import RepeaterField from "./RepeaterField.svelte";
   import FieldsForm from "./FieldsForm.svelte";
@@ -94,6 +95,8 @@
         <MarkdownEditor {id} {invalid} bind:value={() => data[f.name] ?? "", (v) => set(v)} />
       {:else if f.type === "code"}
         <Textarea {id} {invalid} mono rows={6} value={data[f.name] ?? ""} oninput={(e) => set(e.currentTarget.value)} spellcheck="false" />
+      {:else if f.type === "json"}
+        <JsonField {id} {invalid} value={data[f.name]} onchange={set} />
       {:else if f.type === "integer"}
         <Input {id} {invalid} type="number" step="1" class="max-w-48" value={data[f.name] ?? ""} oninput={(e) => set(e.currentTarget.value === "" ? null : parseInt(e.currentTarget.value, 10))} />
       {:else if f.type === "number"}
